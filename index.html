@@ -139,9 +139,12 @@
       var sb = getSupabase();
       if (!sb || !userId || !friendId) return false;
       try {
-        var resp = await sb.from('friendships').delete().eq('user_id', userId).eq('friend_id', friendId);
-        if (resp.error) { console.error('[Supabase] 删除好友失败:', resp.error.message); return false; }
-        return true;
+        // 双向删除：删除 userId->friendId 和 friendId->userId 两行
+        var r1 = await sb.from('friendships').delete().eq('user_id', userId).eq('friend_id', friendId);
+        var r2 = await sb.from('friendships').delete().eq('user_id', friendId).eq('friend_id', userId);
+        if (r1.error) { console.error('[Supabase] 删除好友失败(A->B):', r1.error.message); }
+        if (r2.error) { console.error('[Supabase] 删除好友失败(B->A):', r2.error.message); }
+        return !r1.error;
       } catch(ex) { console.error('[Supabase] removeFriendFromSupabase 异常:', ex.message); return false; }
     }
 
@@ -226,8 +229,8 @@
       }
     }
 
-    // 实时订阅：好友关系变化（当别人加你为好友时自动同步）
-    function subscribeToFriendships(userId, onNewFriend) {
+    // 实时订阅：好友关系变化（INSERT=被人添加, DELETE=被人删除）
+    function subscribeToFriendships(userId, onNewFriend, onFriendDeleted) {
       var sb = getSupabase();
       if (!sb || !userId) return null;
       try {
@@ -252,6 +255,15 @@
                   .catch(function() {
                     onNewFriend(friendId, null);
                   });
+              }
+            }
+          )
+          .on('postgres_changes',
+            { event: 'DELETE', schema: 'public', table: 'friendships', filter: 'friend_id=eq.' + userId },
+            function(payload) {
+              if (onFriendDeleted && payload.old) {
+                console.log('[Supabase] 检测到好友关系被删除: friend_id=' + payload.old.friend_id + ' user_id=' + payload.old.user_id);
+                onFriendDeleted(payload.old.user_id);
               }
             }
           )
@@ -1289,6 +1301,24 @@ function useAppState() {
   // 追踪已删除的好友 ID，用于在发现列表中显示红色提示
   const [removedFriendIds, setRemovedFriendIds] = useState(new Set());
 
+  // 当 nearbyUsers 刷新时，同步更新好友列表中对应好友的头像/名称/颜色
+  useEffect(function() {
+    if (!nearbyUsers.length || !friends.length) return;
+    var needsUpdate = false;
+    var updated = friends.map(function(f) {
+      var fresh = nearbyUsers.find(function(u) { return u.id === f.id; });
+      if (fresh && (fresh.name !== f.name || fresh.avatar !== f.avatar || fresh.color !== f.color)) {
+        needsUpdate = true;
+        return { id: f.id, name: fresh.name, avatar: fresh.avatar, color: fresh.color || f.color };
+      }
+      return f;
+    });
+    if (needsUpdate) {
+      setFriends(updated);
+      console.log('[Sync] 好友档案已从 nearby_users 同步更新');
+    }
+  }, [nearbyUsers]);
+
   // 聊天消息 { friendId: [{ id, from, text, time }] }
   const [messages, setMessages] = useState(() => {
     const saved = localStorage.getItem('nlqw_messages');
@@ -1491,6 +1521,12 @@ function useAppState() {
         var newFriend = friendData || { id: friendId, name: '邻居' + friendId.slice(-4), avatar: '👤', color: '#4A90D9' };
         return [...prev, newFriend];
       });
+    }, function(deletedFriendId) {
+      // 对方删除了你，同步从本地好友列表移除
+      setFriends(function(prev) {
+        return prev.filter(function(f) { return f.id !== deletedFriendId; });
+      });
+      console.log('[Supabase] 好友关系已同步删除: ' + deletedFriendId);
     });
     return function() {
       if (channel) {
@@ -1541,7 +1577,13 @@ function useAppState() {
         if (s) cached = JSON.parse(s);
       } catch(e) {}
       if (cached && cached.length > 0) {
-        setNearbyUsers(cached);
+        // 重新评估 online 状态（缓存的 online 字段可能已过期）
+        var now = Date.now();
+        var refreshedCached = cached.map(function(u) {
+          var minsAgo = u.last_seen ? Math.round((now - new Date(u.last_seen).getTime()) / 60000) : 999;
+          return { ...u, online: minsAgo < 5, lastSeen: minsAgo < 1 ? '刚刚在线' : minsAgo < 60 ? minsAgo + '分钟前' : minsAgo < 1440 ? Math.round(minsAgo / 60) + '小时前' : Math.round(minsAgo / 1440) + '天前' };
+        });
+        setNearbyUsers(refreshedCached);
       } else {
         var mockUsers = generateNearbyUsers(lat, lng);
         console.log('[refreshNearbyUsers] 生成模拟用户:', mockUsers.length, '条');
