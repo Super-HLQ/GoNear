@@ -747,11 +747,15 @@ function useAppState() {
 
 
   // 好友管理
-  const addFriend = useCallback((userId) => {
+  const addFriend = useCallback((userId, userData) => {
+    // 优先使用传入的用户数据，否则从 nearbyUsers 中查找
+    var user = userData || nearbyUsers.find(function(u) { return u.id === userId; });
+    if (!user) {
+      console.warn('[addFriend] 未找到用户:', userId);
+      return;
+    }
     setFriends(prev => {
       if (prev.find(f => f.id === userId)) return prev;
-      const user = nearbyUsers.find(u => u.id === userId);
-      if (!user) return prev;
       return [...prev, { id: user.id, name: user.name, avatar: user.avatar, color: user.color }];
     });
   }, [nearbyUsers]);
@@ -2670,6 +2674,7 @@ function FriendListPage({ onChatOpen }) {
   const [locationError, setLocationError] = useState('');
   const [showCityPicker, setShowCityPicker] = useState(false);
   const [citySearchText, setCitySearchText] = useState('');
+  const [justAdded, setJustAdded] = useState({}); // 记录刚添加的好友 ID
 
   // 获取定位
   const handleLocate = useCallback(() => {
@@ -2896,12 +2901,24 @@ function FriendListPage({ onChatOpen }) {
                       {user.intro}
                     </div>
                   </div>
-                  <button
-                    className="btn btn-sm btn-primary"
-                    onClick={() => addFriend(user.id)}
-                  >
-                    <i className="fa-solid fa-plus"></i> 添加
-                  </button>
+                  {justAdded[user.id] ? (
+                    <span className="btn btn-sm" style={{ background: 'var(--success)', color: '#fff', borderRadius: 8, fontSize: 12, padding: '4px 12px' }}>
+                      <i className="fa-solid fa-check"></i> 已添加
+                    </span>
+                  ) : (
+                    <button
+                      className="btn btn-sm btn-primary"
+                      onClick={() => {
+                        addFriend(user.id, user);
+                        setJustAdded(function(prev) { var n = {...prev}; n[user.id] = true; return n; });
+                        setTimeout(function() {
+                          setJustAdded(function(prev) { var n = {...prev}; delete n[user.id]; return n; });
+                        }, 2000);
+                      }}
+                    >
+                      <i className="fa-solid fa-plus"></i> 添加
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

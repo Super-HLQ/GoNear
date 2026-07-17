@@ -79,6 +79,168 @@
       return initSupabase();
     }
 
+    // ===== Supabase 好友 & 聊天辅助函数 =====
+    function getCurrentUserId() {
+      var uid = localStorage.getItem('nlqw_device_uid');
+      if (!uid) {
+        uid = 'u_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('nlqw_device_uid', uid);
+      }
+      return uid;
+    }
+
+    async function loadFriendsFromSupabase(userId) {
+      var sb = getSupabase();
+      if (!sb || !userId) return null;
+      try {
+        var resp = await sb.from('friendships').select('friend_id,created_at').eq('user_id', userId);
+        if (resp.error) { console.error('[Supabase] 加载好友失败:', resp.error.message); return null; }
+        if (!resp.data || resp.data.length === 0) return [];
+        var friendIds = resp.data.map(function(f) { return f.friend_id; });
+        var pResp = await sb.from('nearby_users').select('*').in('id', friendIds);
+        if (pResp.error) { console.error('[Supabase] 加载好友信息失败:', pResp.error.message); return []; }
+        return (pResp.data || []).map(function(p) {
+          return { id: p.id, name: p.name, avatar: p.avatar || '👤', color: p.color || '#4A90D9', intro: p.intro || '' };
+        });
+      } catch(ex) { console.error('[Supabase] loadFriendsFromSupabase 异常:', ex.message); return null; }
+    }
+
+    async function addFriendToSupabase(userId, friendId) {
+      var sb = getSupabase();
+      if (!sb || !userId || !friendId) return false;
+      try {
+        var resp = await sb.from('friendships').upsert({ user_id: userId, friend_id: friendId }, { onConflict: 'user_id,friend_id' });
+        if (resp.error) { console.error('[Supabase] 添加好友失败:', resp.error.message); return false; }
+        return true;
+      } catch(ex) { console.error('[Supabase] addFriendToSupabase 异常:', ex.message); return false; }
+    }
+
+    async function removeFriendFromSupabase(userId, friendId) {
+      var sb = getSupabase();
+      if (!sb || !userId || !friendId) return false;
+      try {
+        var resp = await sb.from('friendships').delete().eq('user_id', userId).eq('friend_id', friendId);
+        if (resp.error) { console.error('[Supabase] 删除好友失败:', resp.error.message); return false; }
+        return true;
+      } catch(ex) { console.error('[Supabase] removeFriendFromSupabase 异常:', ex.message); return false; }
+    }
+
+    async function loadMessagesFromSupabase(userId, friendId) {
+      var sb = getSupabase();
+      if (!sb || !userId || !friendId) return null;
+      try {
+        var filter = 'and(sender_id.eq.' + userId + ',receiver_id.eq.' + friendId + '),and(sender_id.eq.' + friendId + ',receiver_id.eq.' + userId + ')';
+        var resp = await sb.from('messages').select('*').or(filter).order('created_at', { ascending: true }).limit(100);
+        if (resp.error) { console.error('[Supabase] 加载消息失败:', resp.error.message); return null; }
+        return (resp.data || []).map(function(m) {
+          return {
+            id: String(m.id),
+            from: m.sender_id === userId ? 'me' : friendId,
+            text: m.text,
+            time: new Date(m.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+            createdAt: m.created_at
+          };
+        });
+      } catch(ex) { console.error('[Supabase] loadMessagesFromSupabase 异常:', ex.message); return null; }
+    }
+
+    async function sendMessageToSupabase(senderId, receiverId, text) {
+      var sb = getSupabase();
+      if (!sb || !senderId || !receiverId || !text) return null;
+      try {
+        var resp = await sb.from('messages').insert({ sender_id: senderId, receiver_id: receiverId, text: text }).select().single();
+        if (resp.error) { console.error('[Supabase] 发送消息失败:', resp.error.message); return null; }
+        return resp.data;
+      } catch(ex) { console.error('[Supabase] sendMessageToSupabase 异常:', ex.message); return null; }
+    }
+
+    // ===== Supabase Realtime 订阅 =====
+    var _realtimeChannels = {};
+    function subscribeToMessages(userId, onNewMessage) {
+      var sb = getSupabase();
+      if (!sb || !userId) return null;
+      try {
+        // 监听消息表的变化（INSERT）
+        var channel = sb
+          .channel('messages-' + userId)
+          .on('postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'messages', filter: 'receiver_id=eq.' + userId },
+            function(payload) {
+              if (onNewMessage && payload.new) {
+                var msg = {
+                  id: String(payload.new.id),
+                  senderId: payload.new.sender_id,
+                  text: payload.new.text,
+                  time: new Date(payload.new.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+                  createdAt: payload.new.created_at
+                };
+                onNewMessage(msg);
+              }
+            }
+          )
+          .subscribe(function(status) {
+            if (status === 'SUBSCRIBED') console.log('[Supabase] 实时消息订阅成功 (' + userId + ')');
+            else if (status === 'CLOSED') console.log('[Supabase] 实时消息订阅关闭');
+            else if (status === 'CHANNEL_ERROR') console.error('[Supabase] 实时消息订阅错误');
+          });
+        _realtimeChannels[userId] = channel;
+        return channel;
+      } catch(ex) {
+        console.error('[Supabase] subscribeToMessages 异常:', ex.message);
+        return null;
+      }
+    }
+
+    function unsubscribeMessages(userId) {
+      var channel = _realtimeChannels[userId];
+      if (channel) {
+        try { channel.unsubscribe(); } catch(ex) {}
+        delete _realtimeChannels[userId];
+      }
+    }
+
+    // 实时订阅：好友关系变化（当别人加你为好友时自动同步）
+    function subscribeToFriendships(userId, onNewFriend) {
+      var sb = getSupabase();
+      if (!sb || !userId) return null;
+      try {
+        var channel = sb
+          .channel('friendships-' + userId)
+          .on('postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'friendships', filter: 'friend_id=eq.' + userId },
+            function(payload) {
+              if (onNewFriend && payload.new) {
+                // 尝试从 nearby_users 获取对方信息
+                var friendId = payload.new.user_id;
+                var friendMeta = null;
+                // 异步查找对方用户资料
+                sb.from('nearby_users').select('id,name,avatar,color').eq('id', friendId).single()
+                  .then(function(r) {
+                    if (!r.error && r.data) {
+                      onNewFriend(friendId, { id: r.data.id, name: r.data.name, avatar: r.data.avatar, color: r.data.color });
+                    } else {
+                      onNewFriend(friendId, null);
+                    }
+                  })
+                  .catch(function() {
+                    onNewFriend(friendId, null);
+                  });
+              }
+            }
+          )
+          .subscribe(function(status) {
+            if (status === 'SUBSCRIBED') console.log('[Supabase] 好友实时订阅成功 (' + userId + ')');
+            else if (status === 'CLOSED') console.log('[Supabase] 好友实时订阅关闭');
+            else if (status === 'CHANNEL_ERROR') console.error('[Supabase] 好友实时订阅错误');
+          });
+        _realtimeChannels['friends-' + userId] = channel;
+        return channel;
+      } catch(ex) {
+        console.error('[Supabase] subscribeToFriendships 异常:', ex.message);
+        return null;
+      }
+    }
+
     // 检查依赖是否加载成功
     if (typeof React === 'undefined') { document.getElementById('status').innerHTML = '<div style="padding:20px;color:red;">React not loaded</div>'; }
     if (typeof ReactDOM === 'undefined') { document.getElementById('status').innerHTML = '<div style="padding:20px;color:red;">ReactDOM not loaded</div>'; }
@@ -1110,6 +1272,78 @@ function useAppState() {
     return [];
   });
 
+  // Supabase 数据就绪标记
+  const [supabaseDataLoaded, setSupabaseDataLoaded] = useState(false);
+
+  // 应用启动时从 Supabase 加载好友列表
+  useEffect(() => {
+    if (supabaseDataLoaded) return;
+    const uid = currentUser.id;
+    if (!uid) return;
+    loadFriendsFromSupabase(uid).then(data => {
+      if (data && Array.isArray(data)) {
+        console.log('[Supabase] 好友加载完成:', data.length, '位好友');
+        setFriends(data);
+      } else {
+        console.log('[Supabase] 无好友数据，使用本地缓存');
+      }
+      setSupabaseDataLoaded(true);
+    }).catch(function(e) {
+      console.warn('[Supabase] 好友加载异常:', e && e.message);
+      setSupabaseDataLoaded(true);
+    });
+  }, [currentUser.id]); // 仅依赖用户 ID，确保只执行一次
+
+  // ===== 全局 Supabase 实时订阅：消息（不需要打开聊天窗口也能收到）=====
+  useEffect(() => {
+    if (!getSupabase()) return;
+    var uid = currentUser.id;
+    if (!uid) return;
+    console.log('[Supabase] 启动全局消息订阅 (' + uid + ')');
+    var channel = subscribeToMessages(uid, function(newMsg) {
+      // 将收到的消息添加到对应的聊天记录中
+      setMessages(function(prev) {
+        var nm = { ...prev };
+        if (!nm[newMsg.senderId]) nm[newMsg.senderId] = [];
+        if (nm[newMsg.senderId].some(function(m) { return m.id === newMsg.id; })) return prev;
+        nm[newMsg.senderId] = [
+          ...nm[newMsg.senderId],
+          { id: newMsg.id, from: newMsg.senderId, text: newMsg.text, time: newMsg.time }
+        ];
+        console.log('[Supabase] 收到新消息 from=' + newMsg.senderId + ': ' + newMsg.text);
+        return nm;
+      });
+    });
+    return function() {
+      if (channel) {
+        try { channel.unsubscribe(); } catch(e) {}
+        console.log('[Supabase] 全局消息订阅已取消');
+      }
+    };
+  }, [currentUser.id]);
+
+  // ===== 全局 Supabase 实时订阅：好友（别人加你时自动同步）=====
+  useEffect(() => {
+    if (!getSupabase()) return;
+    var uid = currentUser.id;
+    if (!uid) return;
+    console.log('[Supabase] 启动全局好友订阅 (' + uid + ')');
+    var channel = subscribeToFriendships(uid, function(friendId, friendData) {
+      setFriends(function(prev) {
+        if (prev.find(function(f) { return f.id === friendId; })) return prev;
+        console.log('[Supabase] 收到新好友: ' + (friendData ? friendData.name : friendId));
+        var newFriend = friendData || { id: friendId, name: '邻居' + friendId.slice(-4), avatar: '👤', color: '#4A90D9' };
+        return [...prev, newFriend];
+      });
+    });
+    return function() {
+      if (channel) {
+        try { channel.unsubscribe(); } catch(e) {}
+        console.log('[Supabase] 全局好友订阅已取消');
+      }
+    };
+  }, [currentUser.id]);
+
   // Supabase 是否已配置（在 JSX 中同步读取，配合 forceUpdate）
   const [supabaseReady, setSupabaseReady] = useState(() => !!(SUPABASE_URL && SUPABASE_ANON_KEY));
 
@@ -1314,57 +1548,70 @@ function useAppState() {
     return favorites.includes(`${type}_${itemId}`);
   }, [favorites]);
 
+
   // 好友管理
-  const addFriend = useCallback((userId) => {
+  const addFriend = useCallback((userId, userData) => {
+    // 优先使用传入的用户数据，否则从 nearbyUsers 中查找
+    var user = userData || nearbyUsers.find(function(u) { return u.id === userId; });
+    if (!user) {
+      console.warn('[addFriend] 未找到用户:', userId);
+      return;
+    }
     setFriends(prev => {
       if (prev.find(f => f.id === userId)) return prev;
-      const user = nearbyUsers.find(u => u.id === userId);
-      if (!user) return prev;
-      return [...prev, { id: user.id, name: user.name, avatar: user.avatar, color: user.color }];
+      const newFriend = { id: user.id, name: user.name, avatar: user.avatar, color: user.color };
+      // 异步保存到 Supabase
+      addFriendToSupabase(currentUser.id, userId).then(function(ok) {
+        if (ok) console.log('[Supabase] 好友已保存:', userId);
+      });
+      return [...prev, newFriend];
     });
-  }, [nearbyUsers]);
+  }, [nearbyUsers, currentUser.id]);
 
   const removeFriend = useCallback((friendId) => {
     setFriends(prev => prev.filter(f => f.id !== friendId));
-  }, []);
+    // 异步从 Supabase 删除
+    removeFriendFromSupabase(currentUser.id, friendId).then(function(ok) {
+      if (ok) console.log('[Supabase] 好友已删除:', friendId);
+    });
+  }, [currentUser.id]);
 
   const getFriends = useCallback(() => friends, [friends]);
 
-  // 聊天消息
+
+  // 聊天消息（Supabase 持久化 + 非 Supabase 模式自动回复）
   const sendMessage = useCallback((friendId, text) => {
     if (!text.trim()) return;
+    const timeStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    // 立即添加消息到本地状态
     setMessages(prev => {
       const newMessages = { ...prev };
       if (!newMessages[friendId]) newMessages[friendId] = [];
       newMessages[friendId] = [
         ...newMessages[friendId],
-        { id: uuid(), from: 'me', text: text.trim(), time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) },
+        { id: uuid(), from: 'me', text: text.trim(), time: timeStr },
       ];
-      // 模拟对方自动回复
-      setTimeout(() => {
-        const autoReplies = [
-          '好的，收到！',
-          '哈哈，说得好！',
-          '有道理~',
-          '是的呢！',
-          '👍',
-          '到时候见！',
-          '没问题！',
-          '😊',
-        ];
-        setMessages(prev2 => {
-          const nm = { ...prev2 };
+      return newMessages;
+    });
+    // 异步保存到 Supabase（如果已连接）
+    sendMessageToSupabase(currentUser.id, friendId, text.trim()).then(function(data) {
+      if (data) console.log('[Supabase] 消息已发送:', data.id);
+    });
+    // 非 Supabase 模式：模拟对方自动回复（无后端时的实时体验）
+    if (!getSupabase()) {
+      setTimeout(function() {
+        var autoReplies = ['好的，收到！','哈哈，说得好！','有道理~','是的呢！','👍','到时候见！','没问题！','😊'];
+        var reply = autoReplies[Math.floor(Math.random() * autoReplies.length)];
+        var replyTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        setMessages(function(prev2) {
+          var nm = { ...prev2 };
           if (!nm[friendId]) nm[friendId] = [];
-          nm[friendId] = [
-            ...nm[friendId],
-            { id: uuid(), from: friendId, text: autoReplies[Math.floor(Math.random() * autoReplies.length)], time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) },
-          ];
+          nm[friendId] = [...nm[friendId], { id: uuid(), from: friendId, text: reply, time: replyTime }];
           return nm;
         });
       }, 800 + Math.random() * 1500);
-      return newMessages;
-    });
-  }, []);
+    }
+  }, [currentUser.id]);
 
   const getChatMessages = useCallback((friendId) => {
     return messages[friendId] || [];
@@ -4010,6 +4257,7 @@ function FriendListPage({ onChatOpen }) {
   const [supabaseSaving, setSupabaseSaving] = useState(false);
   const [supabaseMsg, setSupabaseMsg] = useState('');
   const [searching, setSearching] = useState(false);
+  const [justAdded, setJustAdded] = useState({}); // 记录刚添加的好友 ID，用于显示"已添加"反馈
 
   const handleSaveSupabase = () => {
     if (!supabaseUrl || !supabaseKey) {
@@ -4373,12 +4621,25 @@ CREATE POLICY "public_all" ON nearby_users
                       {user.intro}
                     </div>
                   </div>
-                  <button
-                    className="btn btn-sm btn-primary"
-                    onClick={() => addFriend(user.id)}
-                  >
-                    <i className="fa-solid fa-plus"></i> 添加
-                  </button>
+                  {justAdded[user.id] ? (
+                    <span className="btn btn-sm" style={{ background: 'var(--success)', color: '#fff', borderRadius: 8, fontSize: 12, padding: '4px 12px' }}>
+                      <i className="fa-solid fa-check"></i> 已添加
+                    </span>
+                  ) : (
+                    <button
+                      className="btn btn-sm btn-primary"
+                      onClick={() => {
+                        addFriend(user.id, user);
+                        // 显示"已添加"反馈，2 秒后自动消失，同时 discoverUsers 会过滤掉该用户
+                        setJustAdded(function(prev) { var n = {...prev}; n[user.id] = true; return n; });
+                        setTimeout(function() {
+                          setJustAdded(function(prev) { var n = {...prev}; delete n[user.id]; return n; });
+                        }, 2000);
+                      }}
+                    >
+                      <i className="fa-solid fa-plus"></i> 添加
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -4423,12 +4684,34 @@ CREATE POLICY "public_all" ON nearby_users
 
 // ==================== 组件：聊天页面 ====================
 function ChatPage({ friend, onBack }) {
-  const { sendMessage, getChatMessages } = useApp();
+  const { sendMessage, getChatMessages, currentUser, setMessages } = useApp();
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
   const chatMessages = getChatMessages(friend.id);
+
+  // 进入聊天时从 Supabase 加载历史消息
+  useEffect(() => {
+    if (!getSupabase()) return;
+    loadMessagesFromSupabase(currentUser.id, friend.id).then(function(data) {
+      if (data && Array.isArray(data) && data.length > 0) {
+        console.log('[Supabase] 聊天记录加载:', data.length, '条');
+        setMessages(function(prev) {
+          var nm = { ...prev };
+          // 仅当本地没有更多消息时才覆盖（保留本地未同步的消息）
+          if (!nm[friend.id] || nm[friend.id].length < data.length) {
+            nm[friend.id] = data;
+          }
+          return nm;
+        });
+      }
+    }).catch(function(e) {
+      console.warn('[Supabase] 聊天记录加载异常:', e && e.message);
+    });
+  }, [friend.id, currentUser.id]);
+
+  // 实时消息已由 App 全局订阅处理，ChatPage 无需重复订阅
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
