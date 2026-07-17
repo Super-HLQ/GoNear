@@ -22,7 +22,7 @@
   <div id="root"></div>
   <script>
     // 清除旧版 localStorage 数据，确保使用最新的预置数据
-    var APP_VERSION = 'v19';
+    var APP_VERSION = 'v18';
     var savedVersion = localStorage.getItem('nlqw_version');
     if (savedVersion !== APP_VERSION) {
       localStorage.removeItem('nlqw_playdates');
@@ -86,14 +86,13 @@
     });
   </script>
   <script type="text/jsx" id="app-code">
-(function() {
 /* ============================================================
    邻里趣玩 - 社区约玩 Web 应用
    主应用入口 - 包含所有组件和业务逻辑
    使用 React Hooks + Babel Standalone
    ============================================================ */
 
-var useState = React.useState, useEffect = React.useEffect, useCallback = React.useCallback, useMemo = React.useMemo, useRef = React.useRef, createContext = React.createContext, useContext = React.useContext, Fragment = React.Fragment;
+const { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment } = React;
 
 // 工具函数
 
@@ -1815,7 +1814,7 @@ function CityPickerModal({ show, onClose, selectedCity, onSelectCity }) {
 
 // 地图页
 function MapPage() {
-  const { places, addPlace, userLocation: globalUserLocation, setUserLocation: setGlobalUserLocation, searchNearby, searchingNearby } = useApp();
+  const { places, addPlace, userLocation: globalUserLocation, setUserLocation: setGlobalUserLocation, searchNearby, searchingNearby, selectedCity, selectCity } = useApp();
   const [viewMode, setViewMode] = useState('map'); // 'map' | 'list'
   const [selectedPlace, setSelectedPlace] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -1833,6 +1832,7 @@ function MapPage() {
   const [activeCategory, setActiveCategory] = useState('all');
   const [sortBy, setSortBy] = useState('distance');
   const [showFilters, setShowFilters] = useState(false);
+  const [showCityPicker, setShowCityPicker] = useState(false);
 
   // Leaflet 地图相关
   const mapContainerRef = useRef(null);
@@ -1868,6 +1868,13 @@ function MapPage() {
     if (userLocation) return userLocation;
     return [22.543, 114.058];
   }, [globalUserLocation, userLocation]);
+
+  // 城市变化时，地图 flyTo 到新城市
+  useEffect(() => {
+    if (mapInstanceRef.current && MAP_CENTER && mapReady) {
+      mapInstanceRef.current.flyTo(MAP_CENTER, 14, { duration: 1.2 });
+    }
+  }, [selectedCity]);
 
   // 同步全局用户位置到本地
   useEffect(() => {
@@ -2013,6 +2020,14 @@ function MapPage() {
       }
     };
   }, [userLocation, viewMode]);
+
+  // 选择城市后地图飞行到目标城市
+  useEffect(() => {
+    if (!mapInstanceRef.current || !mapReady) return;
+    if (selectedCity && selectedCity.lat != null && selectedCity.lng != null) {
+      mapInstanceRef.current.flyTo([selectedCity.lat, selectedCity.lng], 13, { duration: 1.2 });
+    }
+  }, [selectedCity, mapReady]);
 
   // 同步 markMode 到 ref，确保地图事件中能获取最新值
   useEffect(() => {
@@ -2622,6 +2637,7 @@ function MapPage() {
               <i className={`fa-solid ${locating ? 'fa-spinner fa-spin' : 'fa-location-crosshairs'}`}></i>
             </button>
 
+
             {/* 图层切换按钮 */}
             <button
               className={`map-ctrl-btn ${tileLayer === 'satellite' ? 'map-ctrl-active' : ''}`}
@@ -2993,7 +3009,7 @@ function MapPage() {
 
       {/* 添加新地点弹窗 */}
       {showAddForm && (
-        <AddPlaceModal onClose={() => setShowAddForm(false)} onAdd={addPlace} userLocation={globalUserLocation} />
+        <AddPlaceModal onClose={() => setShowAddForm(false)} onAdd={addPlace} userLocation={globalUserLocation} selectedCity={selectedCity} />
       )}
 
       {/* 地图点击标记弹窗 */}
@@ -3022,6 +3038,14 @@ function MapPage() {
         </div>
       )}
 
+      {/* 城市选择弹窗 */}
+      <CityPickerModal
+        show={showCityPicker}
+        onClose={() => setShowCityPicker(false)}
+        selectedCity={selectedCity}
+        onSelectCity={selectCity}
+      />
+
     </div>
   );
 }
@@ -3046,7 +3070,7 @@ const MARKER_ICON_OPTIONS = [
   { icon: 'fa-child', label: '儿童', color: '#FFC107' },
 ];
 
-function AddPlaceModal({ onClose, onAdd, prefillPosition, userLocation }) {
+function AddPlaceModal({ onClose, onAdd, prefillPosition, userLocation, selectedCity }) {
   const [form, setForm] = useState({
     name: '',
     category: 'park',
@@ -3057,7 +3081,7 @@ function AddPlaceModal({ onClose, onAdd, prefillPosition, userLocation }) {
 
   const handleSubmit = () => {
     if (!form.name.trim()) return;
-    // 使用地图点击位置 > 用户位置 > fallback
+    // 使用地图点击位置 > 用户位置 > 所选城市 > fallback
     let lat, lng;
     if (prefillPosition) {
       lat = prefillPosition.lat;
@@ -3067,6 +3091,11 @@ function AddPlaceModal({ onClose, onAdd, prefillPosition, userLocation }) {
       const offsetKm = (Math.random() * 2 + 0.2) / 111.32;
       lat = +(userLocation.lat + offsetKm * Math.cos(angle)).toFixed(5);
       lng = +(userLocation.lng + offsetKm * Math.sin(angle)).toFixed(5);
+    } else if (selectedCity) {
+      const angle = Math.random() * Math.PI * 2;
+      const offsetKm = (Math.random() * 3 + 0.5) / 111.32;
+      lat = +(selectedCity.lat + offsetKm * Math.cos(angle)).toFixed(5);
+      lng = +(selectedCity.lng + offsetKm * Math.sin(angle)).toFixed(5);
     } else {
       lat = 30.28 + Math.random() * 0.02;
       lng = 120.14 + Math.random() * 0.02;
@@ -5409,7 +5438,6 @@ root.render(
   </ThemeProvider>
 );
 
-})();
 </script>
 <script>
   (function() {
@@ -5439,7 +5467,7 @@ root.render(
 
       var result;
       try {
-        result = Babel.transform(code, { presets: ['react'], sourceType: 'unambiguous', compact: true, filename: 'app.jsx' });
+        result = Babel.transform(code, { presets: ['react'], filename: 'app.jsx' });
       } catch(be) {
         fail('Babel ERROR: ' + (be.message || be) + '<br><pre>' + ((be.stack||'').replace(/</g,'&lt;')) + '</pre>');
         return;
