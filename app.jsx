@@ -554,6 +554,21 @@ function useAppState() {
     return saved ? JSON.parse(saved) : [];
   });
 
+  const toggleFavorite = useCallback((itemId, type = 'post') => {
+    setFavorites(prev => {
+      const key = type + '_' + itemId;
+      if (prev.includes(key)) {
+        return prev.filter(f => f !== key);
+      } else {
+        return [...prev, key];
+      }
+    });
+  }, []);
+
+  const isFavorite = useCallback((itemId, type = 'post') => {
+    return favorites.includes(type + '_' + itemId);
+  }, [favorites]);
+
   // 当前用户
   const [currentUser] = useState({ id: 'u0', name: '我' });
 
