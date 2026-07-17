@@ -6147,12 +6147,21 @@ function PlaceDetailPage({ place, onBack }) {
 
 // 主应用
 function App() {
-  const { currentPage, setCurrentPage, places, playDates, updatePlayDate, currentUser } = useApp();
+  const { currentPage, setCurrentPage, places, playDates, updatePlayDate, currentUser, friends } = useApp();
   const [detailPlace, setDetailPlace] = useState(null);
   const [showPlayModal, setShowPlayModal] = useState(false);
   const [playModalPlace, setPlayModalPlace] = useState(null);
   const [toast, setToast] = useState(null); // { message, icon }
   const [chatFriend, setChatFriend] = useState(null); // 当前聊天的好友
+
+  // 当 friends 数组更新（如好友改了头像/名字/颜色），同步 chatFriend
+  useEffect(() => {
+    if (!chatFriend) return;
+    const updated = friends.find(f => f.id === chatFriend.id);
+    if (updated && (updated.name !== chatFriend.name || updated.avatar !== chatFriend.avatar || updated.color !== chatFriend.color)) {
+      setChatFriend(updated);
+    }
+  }, [friends]);
 
   // 监听全局约玩事件
   useEffect(() => {
