@@ -2838,13 +2838,6 @@ function FriendListPage({ onChatOpen }) {
                         : '点击开始聊天'}
                     </div>
                   </div>
-                  <button
-                    className="friend-delete-btn"
-                    onClick={(e) => { e.stopPropagation(); setDeleteConfirm(friend); }}
-                    title="删除好友"
-                  >
-                    <i className="fa-solid fa-ellipsis-vertical"></i>
-                  </button>
                 </div>
               );
             })
