@@ -1410,12 +1410,21 @@ function StarRating({ rating, interactive = false, onChange, size = 16, showNumb
 
 // 底部导航栏
 function BottomNav() {
-  const { currentPage, setCurrentPage } = useApp();
+  const { currentPage, setCurrentPage, messages } = useApp();
+
+  // 计算消息总数
+  const totalMsgs = useMemo(() => {
+    let count = 0;
+    Object.keys(messages).forEach(friendId => {
+      count += (messages[friendId] || []).length;
+    });
+    return count;
+  }, [messages]);
 
   const tabs = [
     { key: 'home', label: '首页', icon: 'fa-house' },
     { key: 'map', label: '地图', icon: 'fa-map-location-dot' },
-    { key: 'messages', label: '消息', icon: 'fa-comments' },
+    { key: 'messages', label: '消息', icon: 'fa-comments', badge: totalMsgs },
     { key: 'community', label: '社区', icon: 'fa-users' },
     { key: 'profile', label: '我的', icon: 'fa-user' },
   ];
@@ -1428,7 +1437,14 @@ function BottomNav() {
           className={`nav-item ${currentPage === tab.key ? 'active' : ''}`}
           onClick={() => setCurrentPage(tab.key)}
         >
-          <i className={`fa-solid ${tab.icon}`}></i>
+          <span className="nav-icon-wrap">
+            <i className={`fa-solid ${tab.icon}`}></i>
+            {tab.badge > 0 && (
+              <span className={`nav-badge ${tab.badge < 10 ? '' : ''}`}>
+                {tab.badge > 99 ? '99+' : tab.badge}
+              </span>
+            )}
+          </span>
           <span>{tab.label}</span>
         </button>
       ))}
@@ -4553,6 +4569,10 @@ function ProfilePage() {
 
   return (
     <div className="page-container page-enter">
+      {/* 页面标题 */}
+      <h2 style={{ fontSize: 22, fontWeight: 800, marginBottom: 16, background: 'linear-gradient(135deg, var(--accent-color), var(--star-color))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+        <i className="fa-solid fa-user" style={{ marginRight: 8, WebkitTextFillColor: 'var(--accent-color)' }}></i>我的
+      </h2>
       {/* 用户信息 */}
       <div className="card" style={{ textAlign: 'center', padding: 24, position: 'relative' }}>
         <button

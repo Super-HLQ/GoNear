@@ -266,6 +266,45 @@ body {
   transform: scale(0.95);
 }
 
+/* 导航角标 */
+.nav-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: #FF4757;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(255,71,87,0.4);
+  animation: badgePop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.nav-badge-dot {
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+@keyframes badgePop {
+  from { transform: scale(0); }
+  to { transform: scale(1); }
+}
+
+/* 导航项图标容器 - 用于定位角标 */
+.nav-icon-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
 /* ========== 页面容器 ========== */
 .page-container {
   padding: 16px;
