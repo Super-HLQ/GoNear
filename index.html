@@ -13,14 +13,8 @@
   <!-- Leaflet 真实地图 -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- Supabase 免费后端 (v2.39.0 UMD 稳定版) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
-  <script>
-    // 降级：如果 UMD 模块不存在，尝试从 unpkg CDN 加载
-    if (typeof window.supabase === 'undefined' || window.supabase === null) {
-      document.write('<script src="https://unpkg.com/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"><\/script>');
-    }
-  </script>
+  <!-- Supabase 免费后端 (v2.39.0 本地内置) -->
+  <script src="supabase.min.js"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
