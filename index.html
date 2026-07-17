@@ -4536,10 +4536,10 @@ function FriendListPage({ onChatOpen }) {
   };
 
   const nearbyCount = useMemo(() => {
-    if (!userLocation) return nearbyUsers.length;
+    if (!userLocation) return 0;
     const friendIds = new Set(friends.map(f => f.id));
-    return nearbyUsers.filter(u => !friendIds.has(u.id) && u.online).length;
-  }, [nearbyUsers, friends, userLocation]);
+    return nearbyUsers.filter(u => u.id !== currentUser.id && !friendIds.has(u.id) && u.online).length;
+  }, [nearbyUsers, friends, userLocation, currentUser.id]);
 
   return (
     <div className="page-container page-enter">
