@@ -696,17 +696,18 @@ const fetchNearbyUsers = async (lat, lng) => {
       const minutesAgo = u.last_seen
         ? Math.round((Date.now() - new Date(u.last_seen).getTime()) / 60000)
         : 999;
+      const online = minutesAgo < 5;
       return {
         ...u,
         distance,
         distanceText: formatDistance(distance),
-        online: minutesAgo < 5,
+        online,
         lastSeen: minutesAgo < 1 ? '刚刚在线'
           : minutesAgo < 60 ? `${minutesAgo}分钟前`
           : minutesAgo < 1440 ? `${Math.round(minutesAgo / 60)}小时前`
           : `${Math.round(minutesAgo / 1440)}天前`,
       };
-    }).filter(u => u.distance <= 5).slice(0, 30); // 5km 精确过滤
+    }).filter(u => u.distance <= 5 && u.online).slice(0, 30); // 5km + 仅在线
 
     console.log('[fetchNearbyUsers] 5km过滤后:', mapped.length, '条');
     return mapped;
@@ -1602,16 +1603,16 @@ function useAppState() {
         if (s) cached = JSON.parse(s);
       } catch(e) {}
       if (cached && cached.length > 0) {
-        // 重新评估 online 状态（缓存的 online 字段可能已过期）
+        // 重新评估 online 状态（缓存的 online 字段可能已过期）并只保留在线用户
         var now = Date.now();
         var refreshedCached = cached.map(function(u) {
           var minsAgo = u.last_seen ? Math.round((now - new Date(u.last_seen).getTime()) / 60000) : 999;
           return { ...u, online: minsAgo < 5, lastSeen: minsAgo < 1 ? '刚刚在线' : minsAgo < 60 ? minsAgo + '分钟前' : minsAgo < 1440 ? Math.round(minsAgo / 60) + '小时前' : Math.round(minsAgo / 1440) + '天前' };
-        });
+        }).filter(function(u) { return u.online; }); // 只保留在线用户
         setNearbyUsers(refreshedCached);
       } else {
-        var mockUsers = generateNearbyUsers(lat, lng);
-        console.log('[refreshNearbyUsers] 生成模拟用户:', mockUsers.length, '条');
+        var mockUsers = generateNearbyUsers(lat, lng).filter(function(u) { return u.online; });
+        console.log('[refreshNearbyUsers] 生成模拟用户(仅在线):', mockUsers.length, '条');
         setNearbyUsers(mockUsers);
       }
     }
