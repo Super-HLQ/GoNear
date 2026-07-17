@@ -5941,7 +5941,7 @@ function ProfilePage() {
                     avatar: editAvatar,
                     avatarColor: editAvatar ? editAvatarColor : null,
                   });
-                  syncCurrentUserToSupabase();
+                  // useEffect 会在 currentUser 更新后自动同步到 Supabase，这里不立即调用避免用旧值覆盖
                   setShowEditProfile(false);
                 }}
               >
