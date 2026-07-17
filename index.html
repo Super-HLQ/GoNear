@@ -1797,6 +1797,13 @@ function useAppState() {
       console.warn('[addFriend] 未找到用户:', userId);
       return;
     }
+    // 重新添加时清理旧聊天记录，从头开始
+    setMessages(function(prev) {
+      if (!prev[userId]) return prev;
+      var next = { ...prev };
+      delete next[userId];
+      return next;
+    });
     setFriends(prev => {
       if (prev.find(f => f.id === userId)) return prev;
       const newFriend = { id: user.id, name: user.name, avatar: user.avatar, color: user.color };
