@@ -1832,7 +1832,7 @@ function MapPage() {
   const [activeCategory, setActiveCategory] = useState('all');
   const [sortBy, setSortBy] = useState('distance');
   const [showFilters, setShowFilters] = useState(false);
-
+  const [showCityPicker, setShowCityPicker] = useState(false);
 
   // Leaflet 地图相关
   const mapContainerRef = useRef(null);
@@ -2511,10 +2511,10 @@ function MapPage() {
         <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>
           <i className="fa-solid fa-map-location-dot text-accent"></i> 探索周边
           {globalUserLocation && (
-            <span className="tag tag-green" style={{ marginLeft: 8, fontSize: 11 }}>
-              <i className="fa-solid fa-location-dot"></i>
+            <span className={`tag ${selectedCity ? 'tag-purple' : 'tag-green'}`} style={{ marginLeft: 8, fontSize: 11 }}>
+              <i className={selectedCity ? 'fa-solid fa-city' : 'fa-solid fa-location-dot'}></i>
               {' '}
-              已定位 · {filteredPlaces.length} 个地点
+              {selectedCity ? selectedCity.name + ' · ' + filteredPlaces.length + ' 个地点' : '已定位 · ' + filteredPlaces.length + ' 个地点'}
             </span>
           )}
           {searchingNearby && (
@@ -2550,6 +2550,26 @@ function MapPage() {
           </button>
         </div>
 
+        {/* 城市指示器 */}
+        <div className="map-city-bar">
+          <button
+            className={`map-city-btn ${selectedCity ? 'map-city-btn-active' : ''}`}
+            onClick={() => setShowCityPicker(true)}
+          >
+            <i className="fa-solid fa-city"></i>
+            <span>{selectedCity ? selectedCity.name : '选择城市'}</span>
+            <i className="fa-solid fa-chevron-down map-city-arrow"></i>
+          </button>
+          {selectedCity && (
+            <button
+              className="map-city-reset"
+              onClick={() => selectCity(null)}
+              title="恢复 GPS 定位"
+            >
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          )}
+        </div>
 
         {/* 分类筛选 & 排序（可折叠） */}
         {(showFilters || activeCategory !== 'all') && (
@@ -2637,6 +2657,14 @@ function MapPage() {
               <i className={`fa-solid ${locating ? 'fa-spinner fa-spin' : 'fa-location-crosshairs'}`}></i>
             </button>
 
+            {/* 选择城市 */}
+            <button
+              className={`map-ctrl-btn ${selectedCity ? 'map-ctrl-active' : ''}`}
+              onClick={() => setShowCityPicker(true)}
+              title={selectedCity ? `已选：${selectedCity.name}（点击切换）` : '选择城市'}
+            >
+              <i className="fa-solid fa-city"></i>
+            </button>
 
             {/* 图层切换按钮 */}
             <button
@@ -3037,6 +3065,14 @@ function MapPage() {
           <i className="fa-solid fa-thumbtack"></i> 点击地图任意位置放置标记
         </div>
       )}
+
+      {/* 城市选择弹窗 */}
+      <CityPickerModal
+        show={showCityPicker}
+        onClose={() => setShowCityPicker(false)}
+        selectedCity={selectedCity}
+        onSelectCity={selectCity}
+      />
 
     </div>
   );
@@ -3901,6 +3937,7 @@ function FriendListPage({ onChatOpen }) {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState('');
+  const [showCityPicker, setShowCityPicker] = useState(false);
   const [showSupabaseSetup, setShowSupabaseSetup] = useState(false);
   const [supabaseUrl, setSupabaseUrl] = useState(SUPABASE_URL);
   const [supabaseKey, setSupabaseKey] = useState(SUPABASE_ANON_KEY);
@@ -4244,8 +4281,29 @@ CREATE POLICY "public_all" ON nearby_users
             </div>
           )}
 
+          {/* 没有定位时，提供城市选择作为回退 */}
+          {!userLocation && !locating && (
+            <div style={{ textAlign: 'center', marginTop: 12 }}>
+              <p style={{ fontSize: 13, color: 'var(--text-color)', opacity: 0.6, marginBottom: 8 }}>
+                也可以选择一个城市，看看那里的邻居
+              </p>
+              <button className="btn btn-sm btn-secondary" onClick={() => setShowCityPicker(true)}>
+                <i className="fa-solid fa-city"></i> 选择城市
+              </button>
+            </div>
+          )}
 
-
+          {showCityPicker && (
+            <CityPickerModal
+              show={showCityPicker}
+              onClose={() => setShowCityPicker(false)}
+              selectedCity={selectedCity}
+              onSelectCity={(city) => {
+                selectCity(city);
+                setShowCityPicker(false);
+              }}
+            />
+          )}
 
           {userLocation && discoverUsers.length > 0 && (
             <div className="friend-list">
