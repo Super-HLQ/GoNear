@@ -4516,6 +4516,7 @@ function FriendListPage({ onChatOpen }) {
     const filtered = nearbyUsers.filter(u =>
       u.id !== currentUser.id &&   // 排除自己
       !friendIds.has(u.id) &&
+      u.online &&                  // 只显示在线用户
       (searchText === '' || u.name.includes(searchText) || u.intro.includes(searchText))
     );
     return filtered.sort((a, b) => (a.distance || 999) - (b.distance || 999));
@@ -4536,7 +4537,7 @@ function FriendListPage({ onChatOpen }) {
   const nearbyCount = useMemo(() => {
     if (!userLocation) return nearbyUsers.length;
     const friendIds = new Set(friends.map(f => f.id));
-    return nearbyUsers.filter(u => !friendIds.has(u.id)).length;
+    return nearbyUsers.filter(u => !friendIds.has(u.id) && u.online).length;
   }, [nearbyUsers, friends, userLocation]);
 
   return (
@@ -4659,7 +4660,7 @@ function FriendListPage({ onChatOpen }) {
             <div className="discover-location-bar">
               <i className="fa-solid fa-location-dot"></i>
               <span>
-                {selectedCity ? selectedCity.name + ' · 发现 ' + nearbyCount + ' 位邻居' : '已定位 · 发现 ' + nearbyCount + ' 位附近的邻居'}
+                {selectedCity ? selectedCity.name + ' · 发现 ' + nearbyCount + ' 位在线邻居' : '已定位 · 发现 ' + nearbyCount + ' 位附近的在线邻居'}
                 {supabaseReady ? ' ✅' : ' ⚠️'}
               </span>
               <button className="discover-refresh-btn" onClick={handleRefresh} title="刷新" disabled={searching}>
