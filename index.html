@@ -150,7 +150,8 @@
       try {
         var filter = 'and(sender_id.eq.' + userId + ',receiver_id.eq.' + friendId + '),and(sender_id.eq.' + friendId + ',receiver_id.eq.' + userId + ')';
         var resp = await sb.from('messages').select('*').or(filter).order('created_at', { ascending: true }).limit(100);
-        if (resp.error) { console.error('[Supabase] 加载消息失败:', resp.error.message); return null; }
+        if (resp.error) { console.error('[LoadMsg] ❌ 失败:', resp.error.message); return null; }
+        console.log('[LoadMsg] ✅ 加载 ' + (resp.data ? resp.data.length : 0) + ' 条消息 ' + userId + '<->' + friendId);
         return (resp.data || []).map(function(m) {
           return {
             id: String(m.id),
@@ -160,7 +161,7 @@
             createdAt: m.created_at
           };
         });
-      } catch(ex) { console.error('[Supabase] loadMessagesFromSupabase 异常:', ex.message); return null; }
+      } catch(ex) { console.error('[LoadMsg] 异常:', ex.message); return null; }
     }
 
     async function sendMessageToSupabase(senderId, receiverId, text) {
@@ -168,9 +169,10 @@
       if (!sb || !senderId || !receiverId || !text) return null;
       try {
         var resp = await sb.from('messages').insert({ sender_id: senderId, receiver_id: receiverId, text: text }).select().single();
-        if (resp.error) { console.error('[Supabase] 发送消息失败:', resp.error.message); return null; }
+        if (resp.error) { console.error('[SendMsg] ❌ 失败:', resp.error.message, 'code=' + resp.error.code); return null; }
+        console.log('[SendMsg] ✅ 已写入 Supabase id=' + resp.data.id + ' sender=' + senderId + ' -> receiver=' + receiverId);
         return resp.data;
-      } catch(ex) { console.error('[Supabase] sendMessageToSupabase 异常:', ex.message); return null; }
+      } catch(ex) { console.error('[SendMsg] 异常:', ex.message); return null; }
     }
 
     // ===== Supabase Realtime 订阅 =====
@@ -179,12 +181,15 @@
       var sb = getSupabase();
       if (!sb || !userId) return null;
       try {
-        // 监听消息表的变化（INSERT）
+        // 监听消息表的变化（INSERT），按 receiver_id 过滤
+        var chName = 'msgs-' + userId;
+        console.log('[Realtime] 创建频道: ' + chName + ' filter=receiver_id=eq.' + userId);
         var channel = sb
-          .channel('messages-' + userId)
+          .channel(chName)
           .on('postgres_changes',
             { event: 'INSERT', schema: 'public', table: 'messages', filter: 'receiver_id=eq.' + userId },
             function(payload) {
+              console.log('[Realtime] ⚡ 收到实时推送 payload.id=' + (payload.new && payload.new.id));
               if (onNewMessage && payload.new) {
                 var msg = {
                   id: String(payload.new.id),
@@ -198,14 +203,16 @@
             }
           )
           .subscribe(function(status) {
-            if (status === 'SUBSCRIBED') console.log('[Supabase] 实时消息订阅成功 (' + userId + ')');
-            else if (status === 'CLOSED') console.log('[Supabase] 实时消息订阅关闭');
-            else if (status === 'CHANNEL_ERROR') console.error('[Supabase] 实时消息订阅错误');
+            if (status === 'SUBSCRIBED') console.log('[Realtime] ✅ 频道 ' + chName + ' 订阅成功');
+            else if (status === 'CLOSED') console.log('[Realtime] 🔴 频道 ' + chName + ' 已关闭');
+            else if (status === 'CHANNEL_ERROR') console.error('[Realtime] ❌ 频道 ' + chName + ' 错误');
+            else if (status === 'TIMED_OUT') console.error('[Realtime] ⏰ 频道 ' + chName + ' 超时');
+            else console.log('[Realtime] 频道 ' + chName + ' 状态: ' + status);
           });
         _realtimeChannels[userId] = channel;
         return channel;
       } catch(ex) {
-        console.error('[Supabase] subscribeToMessages 异常:', ex.message);
+        console.error('[Realtime] subscribeToMessages 异常:', ex.message);
         return null;
       }
     }
@@ -1337,14 +1344,22 @@ function useAppState() {
   // Supabase 是否已配置（在 JSX 中同步读取，配合 forceUpdate）
   const [supabaseReady, setSupabaseReady] = useState(() => false);
 
-  // ===== 全局 Supabase 实时订阅：消息（不需要打开聊天窗口也能收到）=====
-  useEffect(() => {
-    if (!supabaseReady || !getSupabase() || !isSupabaseTablesReady()) return;
+  // ===== 全局 Supabase 实时订阅 + 轮询兜底：消息 =====
+  useEffect(function() {
+    if (!supabaseReady || !getSupabase() || !isSupabaseTablesReady()) {
+      console.log('[Sub] 订阅跳过: supabaseReady=' + supabaseReady + ', tablesReady=' + isSupabaseTablesReady());
+      return;
+    }
     var uid = currentUser.id;
-    if (!uid) return;
-    console.log('[Supabase] 启动全局消息订阅 (' + uid + ')');
-    var channel = subscribeToMessages(uid, function(newMsg) {
-      // 将收到的消息添加到对应的聊天记录中
+    if (!uid) { console.log('[Sub] 无用户ID，跳过订阅'); return; }
+
+    var alive = true;
+    var realtimeOk = false;
+    var pollTimer = null;
+    var lastPollMaxId = 0;
+
+    // 将收到的消息写入本地状态（realtime 和 poll 共用）
+    function onReceiveMsg(newMsg) {
       setMessages(function(prev) {
         var nm = { ...prev };
         if (!nm[newMsg.senderId]) nm[newMsg.senderId] = [];
@@ -1353,21 +1368,84 @@ function useAppState() {
           ...nm[newMsg.senderId],
           { id: newMsg.id, from: newMsg.senderId, text: newMsg.text, time: newMsg.time }
         ];
-        console.log('[Supabase] 收到新消息 from=' + newMsg.senderId + ': ' + newMsg.text);
+        console.log('[Sub] ✅ 收到消息 from=' + newMsg.senderId + ' text=' + (newMsg.text || '').slice(0,20) + ' id=' + newMsg.id);
         return nm;
       });
-      // 递增该好友的未读计数
       setUnreadCounts(function(prev) {
         var next = { ...prev };
         next[newMsg.senderId] = (next[newMsg.senderId] || 0) + 1;
         return next;
       });
+    }
+
+    // Realtime 订阅
+    var subStartTime = Date.now();
+    console.log('[Sub] 🔌 启动消息订阅 uid=' + uid);
+    var channel = subscribeToMessages(uid, function(newMsg) {
+      realtimeOk = true;
+      // 更新最大 ID 以便 poll 跳过已收到的消息
+      var numId = parseInt(newMsg.id, 10);
+      if (numId > lastPollMaxId) lastPollMaxId = numId;
+      onReceiveMsg(newMsg);
     });
+
+    // 轮询兜底：每 5 秒拉取新消息
+    function pollNewMessages() {
+      if (!alive) return;
+      var sb = getSupabase();
+      if (!sb || !isSupabaseTablesReady()) return;
+      sb.from('messages').select('*').eq('receiver_id', uid)
+        .gt('id', lastPollMaxId)
+        .order('id', { ascending: true }).limit(50)
+        .then(function(r) {
+          if (!alive) return;
+          if (r.error) { console.warn('[Poll] 查询失败:', r.error.message); return; }
+          if (!r.data || r.data.length === 0) return;
+          var count = r.data.length;
+          console.log('[Poll] 📡 轮询收到 ' + count + ' 条新消息 (realtime=' + realtimeOk + ')');
+          r.data.forEach(function(m) {
+            var intId = parseInt(m.id, 10);
+            if (intId > lastPollMaxId) lastPollMaxId = intId;
+            // realtime 优先：如果 realtime 已推送过这条消息则跳过
+            setMessages(function(prev) {
+              var nm = { ...prev };
+              if (!nm[m.sender_id]) nm[m.sender_id] = [];
+              var strId = String(m.id);
+              if (nm[m.sender_id].some(function(existing) { return existing.id === strId; })) return prev;
+              var msgObj = {
+                id: strId,
+                from: m.sender_id,
+                text: m.text,
+                time: new Date(m.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+                createdAt: m.created_at
+              };
+              nm[m.sender_id] = [...nm[m.sender_id], msgObj];
+              return nm;
+            });
+            setUnreadCounts(function(prev) {
+              var next = { ...prev };
+              next[m.sender_id] = (next[m.sender_id] || 0) + 1;
+              return next;
+            });
+          });
+        }).catch(function(e) {
+          if (alive) console.warn('[Poll] 异常:', e && e.message);
+        });
+      pollTimer = setTimeout(pollNewMessages, 5000);
+    }
+
+    // Realtime 订阅成功后启动轮询（兜底）
+    setTimeout(function() {
+      if (!alive) return;
+      console.log('[Sub] realtime状态检测: realtimeOk=' + realtimeOk + ' 耗时=' + (Date.now() - subStartTime) + 'ms');
+      pollTimer = setTimeout(pollNewMessages, 5000);
+    }, 6000);
+
     return function() {
-      if (channel) {
-        try { channel.unsubscribe(); } catch(e) {}
-        console.log('[Supabase] 全局消息订阅已取消');
-      }
+      alive = false;
+      if (channel) { try { channel.unsubscribe(); } catch(e) {} }
+      if (pollTimer) clearTimeout(pollTimer);
+      console.log('[Sub] 消息订阅已清理');
     };
   }, [currentUser.id, supabaseReady]);
 
