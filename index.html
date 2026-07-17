@@ -1334,6 +1334,9 @@ function useAppState() {
     });
   }, [currentUser.id]); // 仅依赖用户 ID，确保只执行一次
 
+  // Supabase 是否已配置（在 JSX 中同步读取，配合 forceUpdate）
+  const [supabaseReady, setSupabaseReady] = useState(() => false);
+
   // ===== 全局 Supabase 实时订阅：消息（不需要打开聊天窗口也能收到）=====
   useEffect(() => {
     if (!supabaseReady || !getSupabase() || !isSupabaseTablesReady()) return;
@@ -1389,9 +1392,6 @@ function useAppState() {
       }
     };
   }, [currentUser.id, supabaseReady]);
-
-  // Supabase 是否已配置（在 JSX 中同步读取，配合 forceUpdate）
-  const [supabaseReady, setSupabaseReady] = useState(() => false);
 
   // 应用启动时检测 Supabase 表是否就绪
   useEffect(() => {
