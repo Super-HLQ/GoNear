@@ -735,7 +735,7 @@ const syncUserProfile = async (user, lat, lng) => {
         name: user.name || '邻居',
         avatar: user.avatar || '👤',
         intro: user.intro || '',
-        color: user.color || '#4A90D9',
+        color: user.avatarColor || user.color || '#4A90D9',
         lat,
         lng,
         last_seen: new Date().toISOString(),
