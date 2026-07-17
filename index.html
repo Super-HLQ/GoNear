@@ -1629,10 +1629,14 @@ function useAppState() {
     }
   }, [currentUser]);
 
-  // 用户名/头像改动时自动同步到 Supabase
+  // 用户名/头像改动时自动同步到 Supabase 并刷新 nearbyUsers 缓存
   useEffect(() => {
     if (supabaseReady && currentUser && currentUser.id) {
       syncCurrentUserToSupabase();
+      // 同步后刷新 nearbyUsers，确保本地缓存中的当前用户资料也更新
+      if (userLocation) {
+        refreshNearbyUsers(userLocation.lat, userLocation.lng);
+      }
     }
   }, [currentUser.name, currentUser.avatar, currentUser.avatarColor, currentUser.intro, supabaseReady]);
 
