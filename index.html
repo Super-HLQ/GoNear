@@ -93,7 +93,7 @@
    使用 React Hooks + Babel Standalone
    ============================================================ */
 
-const { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment } = React;
+var useState = React.useState, useEffect = React.useEffect, useCallback = React.useCallback, useMemo = React.useMemo, useRef = React.useRef, createContext = React.createContext, useContext = React.useContext, Fragment = React.Fragment;
 
 // 工具函数
 
@@ -5439,7 +5439,7 @@ root.render(
 
       var result;
       try {
-        result = Babel.transform(code, { presets: ['react'], sourceType: 'unambiguous', filename: 'app.jsx' });
+        result = Babel.transform(code, { presets: ['react'], sourceType: 'unambiguous', compact: true, filename: 'app.jsx' });
       } catch(be) {
         fail('Babel ERROR: ' + (be.message || be) + '<br><pre>' + ((be.stack||'').replace(/</g,'&lt;')) + '</pre>');
         return;
