@@ -1358,7 +1358,12 @@ function useAppState() {
     var alive = true;
     var realtimeOk = false;
     var pollTimer = null;
+    // 已计入未读数的消息 ID 集合，防止重复计数
+    var countedMsgIds = {};
+    // 从 localStorage 恢复上次已读的最大消息 ID，避免刷新后重复计数
     var lastPollMaxId = 0;
+    try { var saved = localStorage.getItem('nlqw_last_msg_id'); if (saved) lastPollMaxId = parseInt(saved, 10) || 0; } catch(e) {}
+    console.log('[Sub] 上次已读消息ID:', lastPollMaxId);
 
     // 将收到的消息写入本地状态（realtime 和 poll 共用）
     function onReceiveMsg(newMsg) {
@@ -1393,6 +1398,7 @@ function useAppState() {
       // 更新最大 ID 以便 poll 跳过已收到的消息
       var numId = parseInt(newMsg.id, 10);
       if (numId > lastPollMaxId) lastPollMaxId = numId;
+      try { localStorage.setItem('nlqw_last_msg_id', String(lastPollMaxId)); } catch(e) {}
       onReceiveMsg(newMsg);
     });
 
@@ -1418,11 +1424,13 @@ function useAppState() {
             }
             var intId = parseInt(m.id, 10);
             if (intId > lastPollMaxId) lastPollMaxId = intId;
+            // 持久化最新已读消息 ID
+            try { localStorage.setItem('nlqw_last_msg_id', String(lastPollMaxId)); } catch(e) {}
+            var strId = String(m.id);
             // realtime 优先：如果 realtime 已推送过这条消息则跳过
             setMessages(function(prev) {
               var nm = { ...prev };
               if (!nm[m.sender_id]) nm[m.sender_id] = [];
-              var strId = String(m.id);
               if (nm[m.sender_id].some(function(existing) { return existing.id === strId; })) return prev;
               var msgObj = {
                 id: strId,
@@ -1434,11 +1442,15 @@ function useAppState() {
               nm[m.sender_id] = [...nm[m.sender_id], msgObj];
               return nm;
             });
-            setUnreadCounts(function(prev) {
-              var next = { ...prev };
-              next[m.sender_id] = (next[m.sender_id] || 0) + 1;
-              return next;
-            });
+            // 每条消息只增加一次未读数（防止轮询/刷新时重复计数）
+            if (!countedMsgIds[strId]) {
+              countedMsgIds[strId] = true;
+              setUnreadCounts(function(prev) {
+                var next = { ...prev };
+                next[m.sender_id] = (next[m.sender_id] || 0) + 1;
+                return next;
+              });
+            }
           });
         }).catch(function(e) {
           if (alive) console.warn('[Poll] 异常:', e && e.message);
@@ -1455,9 +1467,10 @@ function useAppState() {
 
     return function() {
       alive = false;
+      try { if (lastPollMaxId > 0) localStorage.setItem('nlqw_last_msg_id', String(lastPollMaxId)); } catch(e) {}
       if (channel) { try { channel.unsubscribe(); } catch(e) {} }
       if (pollTimer) clearTimeout(pollTimer);
-      console.log('[Sub] 消息订阅已清理');
+      console.log('[Sub] 消息订阅已清理, lastPollMaxId=' + lastPollMaxId);
     };
   }, [currentUser.id, supabaseReady]);
 
@@ -1723,6 +1736,13 @@ function useAppState() {
 
   const removeFriend = useCallback((friendId) => {
     setFriends(prev => prev.filter(f => f.id !== friendId));
+    // 删除好友时清零该好友的未读数
+    setUnreadCounts(function(prev) {
+      if (!prev[friendId]) return prev;
+      var next = { ...prev };
+      delete next[friendId];
+      return next;
+    });
     // 异步从 Supabase 删除
     removeFriendFromSupabase(currentUser.id, friendId).then(function(ok) {
       if (ok) console.log('[Supabase] 好友已删除:', friendId);
