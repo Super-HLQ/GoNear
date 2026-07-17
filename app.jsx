@@ -597,6 +597,24 @@ function useAppState() {
     return saved ? JSON.parse(saved) : null; // { name, lat, lng, region }
   });
 
+  // 搜索附近地点
+  const searchNearby = useCallback(async (lat, lng, radius = 2000) => {
+    // 未配置 API Key 时跳过搜索
+    if (!AMAP_KEY) { setSearchingNearby(false); return []; }
+    setSearchingNearby(true);
+    try {
+      const pois = await amapSearchAllNearby(lat, lng, radius);
+      const places = pois.map(poi => convertAmapPoiToPlace(poi, lat, lng));
+      setNearbyPois(places);
+      setSearchingNearby(false);
+      return places;
+    } catch (e) {
+      console.error('搜索附近失败:', e);
+      setSearchingNearby(false);
+      return [];
+    }
+  }, []);
+
   // 选择城市：模拟定位到该城市中心附近，并搜索该城市的真实地点
   const selectCity = useCallback((city) => {
     if (!city) {
@@ -628,24 +646,6 @@ function useAppState() {
     // 异步搜索该城市的真实 POI（搜索范围 5km，覆盖城市核心区域）
     searchNearby(city.lat, city.lng, 5000);
   }, [setUserLocation, refreshNearbyUsers, setPlaces, setNearbyPois, searchNearby]);
-
-  // 搜索附近地点
-  const searchNearby = useCallback(async (lat, lng, radius = 2000) => {
-    // 未配置 API Key 时跳过搜索
-    if (!AMAP_KEY) { setSearchingNearby(false); return []; }
-    setSearchingNearby(true);
-    try {
-      const pois = await amapSearchAllNearby(lat, lng, radius);
-      const places = pois.map(poi => convertAmapPoiToPlace(poi, lat, lng));
-      setNearbyPois(places);
-      setSearchingNearby(false);
-      return places;
-    } catch (e) {
-      console.error('搜索附近失败:', e);
-      setSearchingNearby(false);
-      return [];
-    }
-  }, []);
 
   // 持久化
   useEffect(() => { localStorage.setItem('nlqw_posts', JSON.stringify(posts)); }, [posts]);
