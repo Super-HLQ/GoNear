@@ -1315,7 +1315,7 @@ function useAppState() {
 
   // ===== 全局 Supabase 实时订阅：消息（不需要打开聊天窗口也能收到）=====
   useEffect(() => {
-    if (!getSupabase() || !isSupabaseTablesReady()) return;
+    if (!supabaseReady || !getSupabase() || !isSupabaseTablesReady()) return;
     var uid = currentUser.id;
     if (!uid) return;
     console.log('[Supabase] 启动全局消息订阅 (' + uid + ')');
@@ -1339,11 +1339,11 @@ function useAppState() {
         console.log('[Supabase] 全局消息订阅已取消');
       }
     };
-  }, [currentUser.id]);
+  }, [currentUser.id, supabaseReady]);
 
   // ===== 全局 Supabase 实时订阅：好友（别人加你时自动同步）=====
   useEffect(() => {
-    if (!getSupabase() || !isSupabaseTablesReady()) return;
+    if (!supabaseReady || !getSupabase() || !isSupabaseTablesReady()) return;
     var uid = currentUser.id;
     if (!uid) return;
     console.log('[Supabase] 启动全局好友订阅 (' + uid + ')');
@@ -1361,7 +1361,7 @@ function useAppState() {
         console.log('[Supabase] 全局好友订阅已取消');
       }
     };
-  }, [currentUser.id]);
+  }, [currentUser.id, supabaseReady]);
 
   // Supabase 是否已配置（在 JSX 中同步读取，配合 forceUpdate）
   const [supabaseReady, setSupabaseReady] = useState(() => false);
