@@ -1282,6 +1282,27 @@ function useAppState() {
     return saved ? JSON.parse(saved) : {};
   });
 
+  // 未读消息计数 { friendId: number }
+  const [unreadCounts, setUnreadCounts] = useState(() => {
+    const saved = localStorage.getItem('nlqw_unread_counts');
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  // 持久化未读计数
+  useEffect(() => {
+    localStorage.setItem('nlqw_unread_counts', JSON.stringify(unreadCounts));
+  }, [unreadCounts]);
+
+  // 重置某个好友的未读数（进入聊天时调用）
+  const resetUnreadCount = useCallback((friendId) => {
+    setUnreadCounts(function(prev) {
+      if (!prev[friendId] || prev[friendId] === 0) return prev;
+      var next = { ...prev };
+      next[friendId] = 0;
+      return next;
+    });
+  }, []);
+
   // 附近的人（从 Supabase 获取真实用户）
   const [nearbyUsers, setNearbyUsers] = useState(() => {
     const saved = localStorage.getItem('nlqw_nearby_users');
@@ -1331,6 +1352,12 @@ function useAppState() {
         ];
         console.log('[Supabase] 收到新消息 from=' + newMsg.senderId + ': ' + newMsg.text);
         return nm;
+      });
+      // 递增该好友的未读计数
+      setUnreadCounts(function(prev) {
+        var next = { ...prev };
+        next[newMsg.senderId] = (next[newMsg.senderId] || 0) + 1;
+        return next;
       });
     });
     return function() {
@@ -1708,6 +1735,7 @@ function useAppState() {
     nearbyPois, searchNearby, searchingNearby, nearbySearchError,
     friends, addFriend, removeFriend, getFriends,
     messages, sendMessage, getChatMessages,
+    unreadCounts, resetUnreadCount,
     nearbyUsers, refreshNearbyUsers,
     selectedCity, selectCity,
     supabaseReady,
@@ -1771,21 +1799,21 @@ function StarRating({ rating, interactive = false, onChange, size = 16, showNumb
 
 // 底部导航栏
 function BottomNav() {
-  const { currentPage, setCurrentPage, messages } = useApp();
+  const { currentPage, setCurrentPage, unreadCounts } = useApp();
 
-  // 计算消息总数
-  const totalMsgs = useMemo(() => {
-    let count = 0;
-    Object.keys(messages).forEach(friendId => {
-      count += (messages[friendId] || []).length;
+  // 计算未读消息总数
+  const totalUnread = useMemo(() => {
+    var count = 0;
+    Object.keys(unreadCounts).forEach(function(friendId) {
+      count += unreadCounts[friendId] || 0;
     });
     return count;
-  }, [messages]);
+  }, [unreadCounts]);
 
   const tabs = [
     { key: 'home', label: '首页', icon: 'fa-house' },
     { key: 'map', label: '地图', icon: 'fa-map-location-dot' },
-    { key: 'messages', label: '消息', icon: 'fa-comments', badge: totalMsgs },
+    { key: 'messages', label: '消息', icon: 'fa-comments', badge: totalUnread },
     { key: 'community', label: '社区', icon: 'fa-users' },
     { key: 'profile', label: '我的', icon: 'fa-user' },
   ];
@@ -4274,7 +4302,7 @@ function ReviewSection({ placeId, reviews, addReview, updateReview, currentUser 
 
 // ==================== 组件：好友列表（基于真实定位的附近的人）====================
 function FriendListPage({ onChatOpen }) {
-  const { friends, removeFriend, addFriend, messages, nearbyUsers, refreshNearbyUsers, userLocation, setUserLocation, selectedCity, selectCity, supabaseReady, currentUser } = useApp();
+  const { friends, removeFriend, addFriend, messages, unreadCounts, nearbyUsers, refreshNearbyUsers, userLocation, setUserLocation, selectedCity, selectCity, supabaseReady, currentUser } = useApp();
   const [activeTab, setActiveTab] = useState('myFriends');
   const [searchText, setSearchText] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -4355,8 +4383,7 @@ function FriendListPage({ onChatOpen }) {
   }, [activeTab, userLocation, nearbyUsers.length, refreshNearbyUsers]);
 
   const unreadCount = (friendId) => {
-    const msgs = messages[friendId] || [];
-    return msgs.filter(m => m.from === friendId).length;
+    return unreadCounts[friendId] || 0;
   };
 
   const discoverUsers = useMemo(() => {
@@ -4723,12 +4750,17 @@ CREATE POLICY "public_all" ON nearby_users
 
 // ==================== 组件：聊天页面 ====================
 function ChatPage({ friend, onBack }) {
-  const { sendMessage, getChatMessages, currentUser, setMessages } = useApp();
+  const { sendMessage, getChatMessages, currentUser, setMessages, resetUnreadCount } = useApp();
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
   const chatMessages = getChatMessages(friend.id);
+
+  // 进入聊天时清零该好友的未读数
+  useEffect(() => {
+    resetUnreadCount(friend.id);
+  }, [friend.id]);
 
   // 进入聊天时从 Supabase 加载历史消息
   useEffect(() => {
