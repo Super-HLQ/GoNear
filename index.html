@@ -79,6 +79,25 @@
       return initSupabase();
     }
 
+    // 检测 Supabase 核心表是否已创建（messages 和 friendships）
+    var _supabaseTablesAvailable = null; // null=未检测, true=可用, false=不可用
+    function checkSupabaseTables() {
+      var sb = getSupabase();
+      if (!sb) { _supabaseTablesAvailable = false; return Promise.resolve(false); }
+      // 并发检测两张表
+      return Promise.all([
+        sb.from('messages').select('id').limit(1).then(function(r) { return !r.error; }).catch(function() { return false; }),
+        sb.from('friendships').select('id').limit(1).then(function(r) { return !r.error; }).catch(function() { return false; })
+      ]).then(function(results) {
+        _supabaseTablesAvailable = results[0] && results[1];
+        console.log('[Supabase] 表检测: messages=' + results[0] + ', friendships=' + results[1] + ', 可用=' + _supabaseTablesAvailable);
+        return _supabaseTablesAvailable;
+      });
+    }
+    function isSupabaseTablesReady() {
+      return _supabaseTablesAvailable === true;
+    }
+
     // ===== Supabase 好友 & 聊天辅助函数 =====
     function getCurrentUserId() {
       var uid = localStorage.getItem('nlqw_device_uid');
@@ -1296,7 +1315,7 @@ function useAppState() {
 
   // ===== 全局 Supabase 实时订阅：消息（不需要打开聊天窗口也能收到）=====
   useEffect(() => {
-    if (!getSupabase()) return;
+    if (!getSupabase() || !isSupabaseTablesReady()) return;
     var uid = currentUser.id;
     if (!uid) return;
     console.log('[Supabase] 启动全局消息订阅 (' + uid + ')');
@@ -1324,7 +1343,7 @@ function useAppState() {
 
   // ===== 全局 Supabase 实时订阅：好友（别人加你时自动同步）=====
   useEffect(() => {
-    if (!getSupabase()) return;
+    if (!getSupabase() || !isSupabaseTablesReady()) return;
     var uid = currentUser.id;
     if (!uid) return;
     console.log('[Supabase] 启动全局好友订阅 (' + uid + ')');
@@ -1345,7 +1364,15 @@ function useAppState() {
   }, [currentUser.id]);
 
   // Supabase 是否已配置（在 JSX 中同步读取，配合 forceUpdate）
-  const [supabaseReady, setSupabaseReady] = useState(() => !!(SUPABASE_URL && SUPABASE_ANON_KEY));
+  const [supabaseReady, setSupabaseReady] = useState(() => false);
+
+  // 应用启动时检测 Supabase 表是否就绪
+  useEffect(() => {
+    checkSupabaseTables().then(function(ok) {
+      setSupabaseReady(ok);
+      console.log('[App] Supabase 表就绪状态:', ok);
+    });
+  }, []);
 
   // 刷新附近用户（优先 Supabase，回退本地存储）
   const refreshNearbyUsers = useCallback(async (lat, lng) => {
@@ -1355,8 +1382,10 @@ function useAppState() {
     // 始终同步当前用户到 Supabase（必须先完成再查询，否则查不到自己刚写入的数据）
     await syncUserProfile(currentUser, lat, lng);
 
-    // 配置状态仅取决于凭证是否存在，不因查询失败而改变
-    setSupabaseReady(!!(SUPABASE_URL && SUPABASE_ANON_KEY));
+    // 仅当表检测尚未完成时，用凭证存在性作为初步判断
+    if (_supabaseTablesAvailable === null) {
+      setSupabaseReady(!!(SUPABASE_URL && SUPABASE_ANON_KEY));
+    }
 
     // 尝试从 Supabase 获取
     var result = null;
@@ -1597,8 +1626,8 @@ function useAppState() {
     sendMessageToSupabase(currentUser.id, friendId, text.trim()).then(function(data) {
       if (data) console.log('[Supabase] 消息已发送:', data.id);
     });
-    // 非 Supabase 模式：模拟对方自动回复（无后端时的实时体验）
-    if (!getSupabase()) {
+    // 非 Supabase 模式（表未创建或未连接）：模拟对方自动回复
+    if (!isSupabaseTablesReady()) {
       setTimeout(function() {
         var autoReplies = ['好的，收到！','哈哈，说得好！','有道理~','是的呢！','👍','到时候见！','没问题！','😊'];
         var reply = autoReplies[Math.floor(Math.random() * autoReplies.length)];
@@ -4676,7 +4705,17 @@ CREATE POLICY "public_all" ON nearby_users
       )}
 
       <div className="text-center text-muted text-xs" style={{ padding: '24px 0' }}>
-        <i className="fa-solid fa-cloud"></i> {supabaseReady ? '已连接 Supabase · 显示真实在线邻居' : '未配置 Supabase · 配置后显示真实附近邻居'}
+        {supabaseReady ? (
+          <span><i className="fa-solid fa-cloud"></i> 云端模式 · 消息和好友实时同步</span>
+        ) : (
+          <span>
+            <i className="fa-solid fa-database"></i> 本地模式 · 数据仅保存在当前设备
+            {' · '}
+            <a href="https://supabase.com/dashboard/project/uvkdabhmqwquoksiydew/sql/new" target="_blank" rel="noopener" style={{color:'#4A90D9'}}>
+              创建数据库表 →
+            </a>
+          </span>
+        )}
       </div>
     </div>
   );
@@ -4693,7 +4732,7 @@ function ChatPage({ friend, onBack }) {
 
   // 进入聊天时从 Supabase 加载历史消息
   useEffect(() => {
-    if (!getSupabase()) return;
+    if (!getSupabase() || !isSupabaseTablesReady()) return;
     loadMessagesFromSupabase(currentUser.id, friend.id).then(function(data) {
       if (data && Array.isArray(data) && data.length > 0) {
         console.log('[Supabase] 聊天记录加载:', data.length, '条');
