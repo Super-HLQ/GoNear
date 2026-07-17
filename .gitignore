@@ -1,0 +1,5 @@
+run.bat
+server.ps1
+supabase-migration.sql
+test.html
+.codebuddy/
