@@ -1072,7 +1072,7 @@ function HomePage() {
 
 // 地图页
 function MapPage() {
-  const { places, addPlace, userLocation, setUserLocation, selectedCity, selectCity } = useApp();
+  const { places, addPlace, userLocation, setUserLocation } = useApp();
   const [viewMode, setViewMode] = useState('map'); // 'map' | 'list'
   const [selectedPlace, setSelectedPlace] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -1084,37 +1084,6 @@ function MapPage() {
   const [activeCategory, setActiveCategory] = useState('all');
   const [sortBy, setSortBy] = useState('distance');
   const [showFilters, setShowFilters] = useState(false);
-  const [showCityPicker, setShowCityPicker] = useState(false);
-  const [citySearchText, setCitySearchText] = useState('');
-
-  // 城市列表渲染（useMemo 优化）
-  const cityPickerContent = useMemo(() => {
-    if (citySearchText.trim()) {
-      const filtered = CITY_LIST.filter(c => c.name.includes(citySearchText.trim()));
-      if (filtered.length === 0) {
-        return <div className="city-picker-empty"><i className="fa-solid fa-search"></i> 未找到匹配城市</div>;
-      }
-      return filtered.map(city => (
-        <div key={city.name} className={`city-picker-item ${selectedCity && selectedCity.name === city.name ? 'city-picker-item-active' : ''}`}
-          onClick={() => { selectCity(city); setShowCityPicker(false); setCitySearchText(''); }}>
-          <span className="city-picker-name">{city.name}</span>
-          <span className="city-picker-region">{city.region}</span>
-        </div>
-      ));
-    }
-    const regions = [...new Set(CITY_LIST.map(c => c.region))];
-    return regions.map(region => (
-      <div key={region}>
-        <div className="city-region-title">{region}</div>
-        {CITY_LIST.filter(c => c.region === region).map(city => (
-          <div key={city.name} className={`city-picker-item ${selectedCity && selectedCity.name === city.name ? 'city-picker-item-active' : ''}`}
-            onClick={() => { selectCity(city); setShowCityPicker(false); setCitySearchText(''); }}>
-            <span className="city-picker-name">{city.name}</span>
-          </div>
-        ))}
-      </div>
-    ));
-  }, [citySearchText, selectedCity, selectCity, setShowCityPicker, setCitySearchText]);
 
   // 地图点击标记模式
   const [showMarkForm, setShowMarkForm] = useState(false);
@@ -1294,14 +1263,6 @@ function MapPage() {
       }
     };
   }, [userLocation, viewMode]);
-
-  // 选择城市后地图飞行到目标城市
-  useEffect(() => {
-    if (!mapInstanceRef.current || !mapReady) return;
-    if (selectedCity && selectedCity.lat != null && selectedCity.lng != null) {
-      mapInstanceRef.current.flyTo([selectedCity.lat, selectedCity.lng], 13, { duration: 1.2 });
-    }
-  }, [selectedCity, mapReady]);
 
   // 图层切换
   const switchTileLayer = useCallback((type) => {
@@ -1743,15 +1704,6 @@ function MapPage() {
               <i className={`fa-solid ${locating ? 'fa-spinner fa-spin' : 'fa-location-crosshairs'}`}></i>
             </button>
 
-            {/* 选择城市 */}
-            <button
-              className={`map-ctrl-btn ${selectedCity ? 'map-ctrl-active' : ''}`}
-              onClick={() => setShowCityPicker(true)}
-              title={selectedCity ? `已选：${selectedCity.name}（点击切换）` : '选择城市'}
-            >
-              <i className="fa-solid fa-city"></i>
-            </button>
-
             {/* 图层切换按钮 */}
             <button
               className={`map-ctrl-btn ${tileLayer === 'satellite' ? 'map-ctrl-active' : ''}`}
@@ -2001,62 +1953,22 @@ function MapPage() {
             setMarkPosition(null);
           }}
           userLocation={userLocation}
-          selectedCity={selectedCity}
           prefillPosition={markPosition}
         />
       )}
 
-      {/* 城市选择弹窗 */}
-      {showCityPicker && (
-        <div className="modal-overlay city-picker-overlay" onClick={() => setShowCityPicker(false)}>
-          <div className="city-picker-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="city-picker-header">
-              <h3><i className="fa-solid fa-city"></i> 选择城市</h3>
-              <button className="modal-close" onClick={() => setShowCityPicker(false)}>
-                <i className="fa-solid fa-xmark"></i>
-              </button>
-            </div>
-            <div className="city-picker-search">
-              <i className="fa-solid fa-search"></i>
-              <input
-                className="city-picker-input"
-                type="text"
-                placeholder="搜索城市名称..."
-                value={citySearchText}
-                onChange={(e) => setCitySearchText(e.target.value)}
-              />
-              {citySearchText && (
-                <button className="search-clear-btn" onClick={() => setCitySearchText('')}>
-                  <i className="fa-solid fa-xmark"></i>
-                </button>
-              )}
-            </div>
-            <div className="city-picker-body">
-              {cityPickerContent}
-            </div>
-            <div className="city-picker-footer">
-              <button
-                className="btn btn-secondary"
-                onClick={() => { selectCity(null); setShowCityPicker(false); setCitySearchText(''); }}
-              >
-                <i className="fa-solid fa-location-crosshairs"></i> 恢复 GPS 定位
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   );
 }
 
 // 添加新地点弹窗
-function AddPlaceModal({ onClose, onAdd, userLocation, selectedCity, prefillPosition }) {
+function AddPlaceModal({ onClose, onAdd, userLocation, prefillPosition }) {
   const [form, setForm] = useState({ name: '', category: 'park', desc: '', tags: '' });
 
   const handleSubmit = () => {
     if (!form.name.trim()) return;
-    // 坐标优先级：地图点击 > 用户定位 > 所选城市 > fallback
+    // 坐标优先级：地图点击 > 用户定位 > fallback
     let lat, lng;
     if (prefillPosition) {
       lat = prefillPosition.lat;
@@ -2067,12 +1979,6 @@ function AddPlaceModal({ onClose, onAdd, userLocation, selectedCity, prefillPosi
       const offsetKm = (Math.random() * 2 + 0.2) / 111.32; // 0.2 ~ 2.2km
       lat = +(userLocation.lat + offsetKm * Math.cos(angle)).toFixed(5);
       lng = +(userLocation.lng + offsetKm * Math.sin(angle)).toFixed(5);
-    } else if (selectedCity) {
-      // 在所选城市中心附近随机偏移
-      const angle = Math.random() * Math.PI * 2;
-      const offsetKm = (Math.random() * 3 + 0.5) / 111.32; // 0.5 ~ 3.5km
-      lat = +(selectedCity.lat + offsetKm * Math.cos(angle)).toFixed(5);
-      lng = +(selectedCity.lng + offsetKm * Math.sin(angle)).toFixed(5);
     } else {
       lat = 30.28 + Math.random() * 0.02;
       lng = 120.14 + Math.random() * 0.02;
