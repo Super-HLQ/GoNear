@@ -1655,16 +1655,15 @@ function MapPage() {
             {activeCategory !== 'all' ? PLACE_CATEGORY_LABEL[activeCategory] : '全部地点'} · {filteredPlaces.length} 个
             {userLocation && (
               <span style={{
-                background: selectedCity ? '#6C5CE7' : 'var(--success-color)',
+                background: 'var(--success-color)',
                 color: '#FFF',
                 fontSize: 10,
                 padding: '1px 8px',
                 borderRadius: 10,
                 fontWeight: 600,
               }}>
-                <i className={selectedCity ? 'fa-solid fa-city' : 'fa-solid fa-location-dot'}></i>
-                {' '}
-                {selectedCity ? selectedCity.name : '附近模式'}
+                <i className="fa-solid fa-location-dot"></i>
+                {' '}已定位
               </span>
             )}
           </span>
