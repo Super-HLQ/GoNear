@@ -128,6 +128,54 @@ const formatDistance = (km) => {
   return km.toFixed(1) + 'km';
 };
 
+// ===== 附近用户模拟数据池 =====
+const NEARBY_USER_POOL = [
+  { id: 'u1',  name: '小明', avatar: '👦',   intro: '爱运动，喜欢打篮球', color: '#4A90D9' },
+  { id: 'u2',  name: '小红', avatar: '👧',   intro: '喜欢逛公园和拍照', color: '#E91E63' },
+  { id: 'u3',  name: '阿杰', avatar: '🧑',   intro: '羽毛球爱好者，周末约球', color: '#FF9800' },
+  { id: 'u4',  name: '小美', avatar: '👩',   intro: '爱跑步爱生活', color: '#9C27B0' },
+  { id: 'u5',  name: '老张', avatar: '👨',   intro: '棋牌达人，欢迎约战', color: '#795548' },
+  { id: 'u6',  name: '莉莉', avatar: '👩‍🦰', intro: '喜欢看书和逛书店', color: '#00BCD4' },
+  { id: 'u7',  name: '大伟', avatar: '🧔',   intro: '户外达人，周末常爬山', color: '#4CAF50' },
+  { id: 'u8',  name: '小雨', avatar: '👩‍🦱', intro: '宝妈一枚，爱带娃遛公园', color: '#FF5722' },
+  { id: 'u9',  name: '阿强', avatar: '💪',   intro: '健身爱好者，找搭子', color: '#FF6F00' },
+  { id: 'u10', name: '小雅', avatar: '👩‍🎨', intro: '喜欢画画和手工', color: '#009688' },
+  { id: 'u11', name: '大刘', avatar: '🚴',   intro: '骑行达人，周边都熟', color: '#3F51B5' },
+  { id: 'u12', name: '思思', avatar: '👩‍💼', intro: '上班族，周末想放松', color: '#E040FB' },
+  { id: 'u13', name: '老王', avatar: '🧓',   intro: '退休了，天天有空', color: '#607D8B' },
+  { id: 'u14', name: '乐乐', avatar: '🐶',   intro: '养了一只金毛，爱遛狗', color: '#FFAB00' },
+  { id: 'u15', name: '阿花', avatar: '🌻',   intro: '花艺师，热爱自然', color: '#8BC34A' },
+  { id: 'u16', name: '小飞', avatar: '🏃',   intro: '马拉松爱好者', color: '#00B0FF' },
+  { id: 'u17', name: '妮妮', avatar: '💃',   intro: '广场舞领舞，活力满满', color: '#FF4081' },
+  { id: 'u18', name: '大勇', avatar: '🎣',   intro: '钓鱼佬，哪儿有鱼都知道', color: '#5D4037' },
+  { id: 'u19', name: '小溪', avatar: '📸',   intro: '摄影爱好者，爱拍照', color: '#757575' },
+  { id: 'u20', name: '阿宝', avatar: '🍳',   intro: '美食达人，会做菜', color: '#FF6D00' },
+];
+
+/** 基于真实定位生成附近的人（模拟） */
+const generateNearbyUsers = (lat, lng, count) => {
+  if (!lat || !lng) return [];
+  var n = count || rand(8, 15);
+  var shuffled = NEARBY_USER_POOL.slice().sort(function() { return Math.random() - 0.5; });
+  var selected = shuffled.slice(0, Math.min(n, shuffled.length));
+  return selected.map(function(u) {
+    var angle = Math.random() * Math.PI * 2;
+    var distKm = rand(5, 500) / 100;
+    var dLat = (distKm / 111.32) * Math.cos(angle);
+    var dLng = (distKm / (111.32 * Math.cos(lat * Math.PI / 180))) * Math.sin(angle);
+    var userLat = +(lat + dLat).toFixed(5);
+    var userLng = +(lng + dLng).toFixed(5);
+    var distance = calcDistance(lat, lng, userLat, userLng);
+    return {
+      id: u.id, name: u.name, avatar: u.avatar, intro: u.intro, color: u.color,
+      lat: userLat, lng: userLng, distance: distance,
+      distanceText: formatDistance(distance),
+      online: Math.random() > 0.25,
+      lastSeen: Math.random() > 0.5 ? rand(1, 59) + '分钟前' : rand(1, 24) + '小时前',
+    };
+  }).sort(function(a, b) { return a.distance - b.distance; });
+};
+
 /** 格式化日期 */
 const formatDate = (d) => {
   const date = d || new Date();
@@ -430,7 +478,7 @@ const fetchNearbyUsers = async (lat, lng) => {
       .limit(50);
 
     if (error) {
-      console.error('[fetchNearbyUsers] 查询失败:', error.message, error.details);
+      console.error('[fetchNearbyUsers] 查询失败: code=', error.code, 'msg=', error.message, 'details=', error.details, 'hint=', error.hint);
       return null;
     }
 
@@ -1087,14 +1135,20 @@ function useAppState() {
       setNearbyUsers(result);
       localStorage.setItem('nlqw_nearby_users', JSON.stringify(result));
     } else {
-      // Supabase 查询失败，使用缓存或空列表
-      console.warn('[refreshNearbyUsers] 查询失败(result=null)，回退缓存');
+      // Supabase 查询失败，先用缓存，无缓存则生成模拟数据
+      console.warn('[refreshNearbyUsers] Supabase查询失败，回退本地数据');
       var cached = null;
       try {
         var s = localStorage.getItem('nlqw_nearby_users');
         if (s) cached = JSON.parse(s);
       } catch(e) {}
-      setNearbyUsers(cached || []);
+      if (cached && cached.length > 0) {
+        setNearbyUsers(cached);
+      } else {
+        var mockUsers = generateNearbyUsers(lat, lng);
+        console.log('[refreshNearbyUsers] 生成模拟用户:', mockUsers.length, '条');
+        setNearbyUsers(mockUsers);
+      }
     }
   }, [currentUser]);
 
