@@ -5439,7 +5439,7 @@ root.render(
 
       var result;
       try {
-        result = Babel.transform(code, { presets: ['react'], filename: 'app.jsx' });
+        result = Babel.transform(code, { presets: ['react'], sourceType: 'unambiguous', filename: 'app.jsx' });
       } catch(be) {
         fail('Babel ERROR: ' + (be.message || be) + '<br><pre>' + ((be.stack||'').replace(/</g,'&lt;')) + '</pre>');
         return;
