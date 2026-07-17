@@ -1564,6 +1564,74 @@ function useAppState() {
     };
   }, [currentUser.id, supabaseReady]);
 
+  // ===== 在线状态管理：定时心跳 + 切后台/关页面时标记离线 =====
+  useEffect(() => {
+    if (!supabaseReady || !currentUser || !currentUser.id) return;
+
+    var heartbeatTimer = null;
+
+    // 发送心跳：更新 last_seen 为当前时间
+    var sendHeartbeat = function() {
+      var ul = null;
+      try { var s = localStorage.getItem('nlqw_user_location'); if (s) ul = JSON.parse(s); } catch(e) {}
+      if (ul && ul.lat && ul.lng && currentUser && currentUser.id) {
+        syncUserProfile(currentUser, ul.lat, ul.lng);
+      }
+    };
+
+    // 标记离线：通过 Supabase REST API 将 last_seen 设为 10 分钟前
+    var markOffline = function() {
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !currentUser || !currentUser.id) return;
+      var url = SUPABASE_URL + '/rest/v1/nearby_users?id=eq.' + encodeURIComponent(currentUser.id);
+      var tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      try {
+        fetch(url, {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({ last_seen: tenMinAgo }),
+          keepalive: true,
+        });
+        console.log('[Presence] 已标记离线');
+      } catch(e) { console.error('[Presence] 标记离线失败:', e.message); }
+    };
+
+    // 可见性变化处理
+    var handleVisibilityChange = function() {
+      if (document.hidden) {
+        // 页面隐藏 → 停止心跳，标记离线
+        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+        markOffline();
+      } else {
+        // 页面恢复可见 → 重新发送心跳
+        sendHeartbeat();
+        heartbeatTimer = setInterval(sendHeartbeat, 60000);
+      }
+    };
+
+    // 初始启动心跳
+    sendHeartbeat();
+    heartbeatTimer = setInterval(sendHeartbeat, 60000);
+    console.log('[Presence] 在线心跳已启动(60s)');
+
+    // 监听事件
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', markOffline);
+    window.addEventListener('pagehide', markOffline);
+
+    return function() {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', markOffline);
+      window.removeEventListener('pagehide', markOffline);
+      console.log('[Presence] 在线心跳已停止');
+    };
+  }, [supabaseReady, currentUser && currentUser.id]);
+
   // 应用启动时检测 Supabase 表是否就绪
   useEffect(() => {
     checkSupabaseTables().then(function(ok) {
