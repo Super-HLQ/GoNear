@@ -727,20 +727,22 @@ function useAppState() {
     return {};
   });
 
-  const addPostComment = useCallback((postId, text, currentUser) => {
+  const addPostComment = useCallback((postId, text, currentUser, postTitle = '') => {
     if (!text.trim()) return;
+    const commentId = '' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     setPostComments(prev => {
       const newComments = { ...prev };
       if (!newComments[postId]) newComments[postId] = [];
       newComments[postId] = [
         ...newComments[postId],
         {
-          id: uuid(),
+          id: commentId,
           userId: currentUser.id,
           userName: currentUser.name,
           text,
           time: '刚刚',
           postId,
+          postTitle: postTitle || '',
         },
       ];
       localStorage.setItem('nlqw_post_comments', JSON.stringify(newComments));
@@ -2159,15 +2161,18 @@ function CommunityPage() {
     if (isLiked) {
       setLikedPosts(prev => prev.filter(id => id !== postId));
       updatePost(postId, { likes: (posts.find(p => p.id === postId)?.likes || 1) - 1 });
+      // 同步到 Supabase: unlikePostToSupabase / updatePostToSupabase
     } else {
       setLikedPosts(prev => [...prev, postId]);
       updatePost(postId, { likes: (posts.find(p => p.id === postId)?.likes || 0) + 1 });
+      // 同步到 Supabase: likePostToSupabase / updatePostToSupabase
     }
   };
 
   const handleAddPostComment = (postId, text) => {
     if (!text.trim()) return;
     addPostComment(postId, text, currentUser);
+    // 本地更新帖子评论数
     const existingComments = postComments[postId] || [];
     updatePost(postId, { comments: existingComments.length + 1 });
   };
