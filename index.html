@@ -1282,6 +1282,8 @@ function useAppState() {
     const saved = localStorage.getItem('nlqw_friends');
     return saved ? JSON.parse(saved) : [];
   });
+  const friendsRef = useRef(friends);
+  useEffect(() => { friendsRef.current = friends; }, [friends]);
 
   // 聊天消息 { friendId: [{ id, from, text, time }] }
   const [messages, setMessages] = useState(() => {
@@ -1360,6 +1362,11 @@ function useAppState() {
 
     // 将收到的消息写入本地状态（realtime 和 poll 共用）
     function onReceiveMsg(newMsg) {
+      // 拒绝非好友的消息
+      if (!friendsRef.current.some(function(f) { return f.id === newMsg.senderId; })) {
+        console.log('[Sub] 🚫 已拒绝非好友消息 from=' + newMsg.senderId);
+        return;
+      }
       setMessages(function(prev) {
         var nm = { ...prev };
         if (!nm[newMsg.senderId]) nm[newMsg.senderId] = [];
@@ -1404,6 +1411,11 @@ function useAppState() {
           var count = r.data.length;
           console.log('[Poll] 📡 轮询收到 ' + count + ' 条新消息 (realtime=' + realtimeOk + ')');
           r.data.forEach(function(m) {
+            // 拒绝非好友的消息
+            if (!friendsRef.current.some(function(f) { return f.id === m.sender_id; })) {
+              console.log('[Poll] 🚫 已拒绝非好友消息 from=' + m.sender_id);
+              return;
+            }
             var intId = parseInt(m.id, 10);
             if (intId > lastPollMaxId) lastPollMaxId = intId;
             // realtime 优先：如果 realtime 已推送过这条消息则跳过
