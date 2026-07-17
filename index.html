@@ -1530,6 +1530,13 @@ function useAppState() {
     }
   }, [currentUser]);
 
+  // 用户名/头像改动时自动同步到 Supabase
+  useEffect(() => {
+    if (supabaseReady && currentUser && currentUser.id) {
+      syncCurrentUserToSupabase();
+    }
+  }, [currentUser.name, currentUser.avatar, currentUser.avatarColor, currentUser.intro, supabaseReady]);
+
   // 当前选中的城市
   const [selectedCity, setSelectedCity] = useState(() => {
     const saved = localStorage.getItem('nlqw_selected_city');
@@ -1716,6 +1723,12 @@ function useAppState() {
   // 聊天消息（Supabase 持久化 + 非 Supabase 模式自动回复）
   const sendMessage = useCallback((friendId, text) => {
     if (!text.trim()) return;
+    // 检查对方是否还是好友
+    const isFriend = friends.some(f => f.id === friendId);
+    if (!isFriend) {
+      console.warn('[SendMsg] 对方不在好友列表中，消息未发送:', friendId);
+      return false;
+    }
     const timeStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
     // 立即添加消息到本地状态
     setMessages(prev => {
@@ -1745,7 +1758,8 @@ function useAppState() {
         });
       }, 800 + Math.random() * 1500);
     }
-  }, [currentUser.id]);
+    return true;
+  }, [currentUser.id, friends]);
 
   const getChatMessages = useCallback((friendId) => {
     return messages[friendId] || [];
@@ -4828,12 +4842,13 @@ CREATE POLICY "public_all" ON nearby_users
 
 // ==================== 组件：聊天页面 ====================
 function ChatPage({ friend, onBack }) {
-  const { sendMessage, getChatMessages, currentUser, setMessages, resetUnreadCount } = useApp();
+  const { sendMessage, getChatMessages, currentUser, setMessages, resetUnreadCount, friends } = useApp();
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
   const chatMessages = getChatMessages(friend.id);
+  const isNotFriend = !friends.some(f => f.id === friend.id);
 
   // 进入聊天时清零该好友的未读数
   useEffect(() => {
@@ -4898,6 +4913,19 @@ function ChatPage({ friend, onBack }) {
         </div>
       </div>
 
+      {isNotFriend && (
+        <div style={{
+          background: '#FFF0F0', border: '1px solid #FFB8B8', borderRadius: 8,
+          padding: '10px 14px', margin: '8px 12px 0',
+          display: 'flex', alignItems: 'center', gap: 8
+        }}>
+          <i className="fa-solid fa-circle-exclamation" style={{ color: '#E53E3E', fontSize: 18 }}></i>
+          <span style={{ color: '#C53030', fontSize: 13, fontWeight: 500 }}>
+            对方已不是你的好友，无法发送消息
+          </span>
+        </div>
+      )}
+
       <div className="chat-messages">
         {chatMessages.length === 0 ? (
           <div className="chat-empty">
@@ -4905,7 +4933,9 @@ function ChatPage({ friend, onBack }) {
               {friend.avatar}
             </div>
             <p className="chat-empty-name">{friend.name}</p>
-            <p className="text-muted text-sm">你们已经是好友了，开始聊天吧！</p>
+            <p className="text-muted text-sm">
+              {isNotFriend ? '对方已不是你的好友' : '你们已经是好友了，开始聊天吧！'}
+            </p>
           </div>
         ) : (
           chatMessages.map((msg, idx) => {
@@ -4937,20 +4967,21 @@ function ChatPage({ friend, onBack }) {
       </div>
 
       <div className="chat-input-bar">
-        <div className="chat-input-wrapper">
+        <div className="chat-input-wrapper" style={isNotFriend ? { opacity: 0.5, pointerEvents: 'none' } : {}}>
           <input
             ref={inputRef}
             id="chat-input" name="chat-input"
             className="chat-input"
-            placeholder="输入消息..."
+            placeholder={isNotFriend ? '对方已不是你的好友' : '输入消息...'}
             value={inputText}
             onChange={e => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
+            disabled={isNotFriend}
           />
           <button
             className="chat-send-btn"
             onClick={handleSend}
-            disabled={!inputText.trim()}
+            disabled={!inputText.trim() || isNotFriend}
           >
             <i className="fa-solid fa-paper-plane"></i>
           </button>
@@ -4980,7 +5011,7 @@ const AVATAR_EMOJIS = ['😀', '😎', '🤩', '🦊', '🐱', '🐶', '🐼', '
 
 function ProfilePage() {
   const { theme, setTheme, themes } = useTheme();
-  const { playDates, posts, favorites, reviews, currentUser, updateCurrentUser, places, setCurrentPage, updatePlayDate, deletePlayDate, deleteReview, updateReview, postComments, deletePostComment } = useApp();
+  const { playDates, posts, favorites, reviews, currentUser, updateCurrentUser, syncCurrentUserToSupabase, places, setCurrentPage, updatePlayDate, deletePlayDate, deleteReview, updateReview, postComments, deletePostComment } = useApp();
   const [activeTab, setActiveTab] = useState('playdates'); // playdates | favorites | reviews
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { playId, playName }
   const [reviewDeleteConfirm, setReviewDeleteConfirm] = useState(null); // review id to delete
@@ -5763,6 +5794,7 @@ function ProfilePage() {
                     avatar: editAvatar,
                     avatarColor: editAvatar ? editAvatarColor : null,
                   });
+                  syncCurrentUserToSupabase();
                   setShowEditProfile(false);
                 }}
               >
