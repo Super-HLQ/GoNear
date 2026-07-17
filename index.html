@@ -1331,6 +1331,25 @@ function useAppState() {
     return saved ? JSON.parse(saved) : {};
   });
 
+  // 清理 localStorage 中已删除好友的残留未读计数（仅执行一次）
+  useEffect(function() {
+    if (!friends.length) return;
+    var friendSet = new Set(friends.map(function(f) { return f.id; }));
+    var cleaned = false;
+    setUnreadCounts(function(prev) {
+      var next = {};
+      var removed = 0;
+      Object.keys(prev).forEach(function(fid) {
+        if (friendSet.has(fid)) next[fid] = prev[fid];
+        else removed++;
+      });
+      if (removed > 0) {
+        cleaned = true;
+      }
+      return removed > 0 ? next : prev;
+    });
+  }, [friends.length > 0]); // eslint-disable-line
+
   // 持久化未读计数
   useEffect(() => {
     localStorage.setItem('nlqw_unread_counts', JSON.stringify(unreadCounts));
@@ -1522,9 +1541,15 @@ function useAppState() {
         return [...prev, newFriend];
       });
     }, function(deletedFriendId) {
-      // 对方删除了你，同步从本地好友列表移除
+      // 对方删除了你，同步从本地好友列表移除并清理未读计数
       setFriends(function(prev) {
         return prev.filter(function(f) { return f.id !== deletedFriendId; });
+      });
+      setUnreadCounts(function(prev) {
+        if (!prev[deletedFriendId]) return prev;
+        var next = { ...prev };
+        delete next[deletedFriendId];
+        return next;
       });
       console.log('[Supabase] 好友关系已同步删除: ' + deletedFriendId);
     });
@@ -1982,16 +2007,19 @@ function StarRating({ rating, interactive = false, onChange, size = 16, showNumb
 
 // 底部导航栏
 function BottomNav() {
-  const { currentPage, setCurrentPage, unreadCounts } = useApp();
+  const { currentPage, setCurrentPage, unreadCounts, friends } = useApp();
 
-  // 计算未读消息总数
+  // 计算未读消息总数——只统计还在好友列表里的，防止删除好友后残留计数
   const totalUnread = useMemo(() => {
     var count = 0;
+    var friendSet = new Set(friends.map(function(f) { return f.id; }));
     Object.keys(unreadCounts).forEach(function(friendId) {
-      count += unreadCounts[friendId] || 0;
+      if (friendSet.has(friendId)) {
+        count += unreadCounts[friendId] || 0;
+      }
     });
     return count;
-  }, [unreadCounts]);
+  }, [unreadCounts, friends]);
 
   const tabs = [
     { key: 'home', label: '首页', icon: 'fa-house' },
