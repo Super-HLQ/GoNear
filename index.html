@@ -13,8 +13,14 @@
   <!-- Leaflet 真实地图 -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- Supabase 免费后端 -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <!-- Supabase 免费后端 (v2.39.0 UMD 稳定版) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
+  <script>
+    // 降级：如果 UMD 模块不存在，尝试从 unpkg CDN 加载
+    if (typeof window.supabase === 'undefined' || window.supabase === null) {
+      document.write('<script src="https://unpkg.com/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"><\/script>');
+    }
+  </script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -55,10 +61,17 @@
     var supabase = null;
     function initSupabase() {
       if (supabase) return supabase;
-      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
-      if (typeof window.supabase === 'undefined') return null;
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+        console.warn('[Supabase] 缺少配置 URL 或 Key');
+        return null;
+      }
+      var sb = window.supabase;
+      if (!sb || typeof sb.createClient !== 'function') {
+        console.warn('[Supabase] SDK 未加载或格式不正确, window.supabase =', sb);
+        return null;
+      }
       try {
-        supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        supabase = sb.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         console.log('[Supabase] 已连接');
         return supabase;
       } catch(e) {
