@@ -1302,24 +1302,6 @@ function useAppState() {
   // 追踪已删除的好友 ID，用于在发现列表中显示红色提示
   const [removedFriendIds, setRemovedFriendIds] = useState(new Set());
 
-  // 当 nearbyUsers 刷新时，同步更新好友列表中对应好友的头像/名称/颜色
-  useEffect(function() {
-    if (!nearbyUsers.length || !friends.length) return;
-    var needsUpdate = false;
-    var updated = friends.map(function(f) {
-      var fresh = nearbyUsers.find(function(u) { return u.id === f.id; });
-      if (fresh && (fresh.name !== f.name || fresh.avatar !== f.avatar || fresh.color !== f.color)) {
-        needsUpdate = true;
-        return { id: f.id, name: fresh.name, avatar: fresh.avatar, color: fresh.color || f.color };
-      }
-      return f;
-    });
-    if (needsUpdate) {
-      setFriends(updated);
-      console.log('[Sync] 好友档案已从 nearby_users 同步更新');
-    }
-  }, [nearbyUsers]);
-
   // 聊天消息 { friendId: [{ id, from, text, time }] }
   const [messages, setMessages] = useState(() => {
     const saved = localStorage.getItem('nlqw_messages');
@@ -1374,6 +1356,24 @@ function useAppState() {
     }
     return [];
   });
+
+  // 当 nearbyUsers 刷新时，同步更新好友列表中对应好友的头像/名称/颜色
+  useEffect(function() {
+    if (!nearbyUsers.length || !friends.length) return;
+    var needsUpdate = false;
+    var updated = friends.map(function(f) {
+      var fresh = nearbyUsers.find(function(u) { return u.id === f.id; });
+      if (fresh && (fresh.name !== f.name || fresh.avatar !== f.avatar || fresh.color !== f.color)) {
+        needsUpdate = true;
+        return { id: f.id, name: fresh.name, avatar: fresh.avatar, color: fresh.color || f.color };
+      }
+      return f;
+    });
+    if (needsUpdate) {
+      setFriends(updated);
+      console.log('[Sync] 好友档案已从 nearby_users 同步更新');
+    }
+  }, [nearbyUsers]);
 
   // Supabase 数据就绪标记
   const [supabaseDataLoaded, setSupabaseDataLoaded] = useState(false);
