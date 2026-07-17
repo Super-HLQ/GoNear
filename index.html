@@ -13,8 +13,9 @@
   <!-- Leaflet 真实地图 -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- Supabase 免费后端 (v2.39.0 本地内置) -->
-  <script src="supabase.min.js"></script>
+  <!-- Supabase 免费后端 (v2.39.0) — CDN 优先，本地备选 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"
+          onerror="console.warn('[Supabase] CDN 加载失败，尝试本地文件');var s=document.createElement('script');s.src='supabase.min.js';document.head.appendChild(s);"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -52,9 +53,9 @@
     } catch(e) {}
     var SUPABASE_URL = supabaseConfig.url || 'https://uvkdabhmqwquoksiydew.supabase.co';
     var SUPABASE_ANON_KEY = supabaseConfig.anonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV2a2RhYmhtcXdxdW9rc2l5ZGV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxODQwMjAsImV4cCI6MjA5OTc2MDAyMH0.TpcSlRkmus-_sbFlGqkjl2TtLi1zR82bUC7WCo0jTFE';
-    var supabase = null;
+    var sbClient = null;
     function initSupabase() {
-      if (supabase) return supabase;
+      if (sbClient) return sbClient;
       if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
         console.warn('[Supabase] 缺少配置 URL 或 Key');
         return null;
@@ -65,16 +66,16 @@
         return null;
       }
       try {
-        supabase = sb.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        sbClient = sb.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         console.log('[Supabase] 已连接');
-        return supabase;
+        return sbClient;
       } catch(e) {
         console.warn('[Supabase] 连接失败:', e.message);
         return null;
       }
     }
     function getSupabase() {
-      if (supabase) return supabase;
+      if (sbClient) return sbClient;
       return initSupabase();
     }
 
@@ -1869,6 +1870,7 @@ function CityPickerModal({ show, onClose, selectedCity, onSelectCity }) {
           <i className="fa-solid fa-search"></i>
           <input
             ref={searchInputRef}
+            id="city-search" name="city-search"
             className="city-picker-input"
             type="text"
             placeholder="搜索城市名称..."
@@ -2614,6 +2616,7 @@ function MapPage() {
             <i className="fa-solid fa-magnifying-glass search-icon"></i>
             <input
               type="text"
+              id="place-search" name="place-search"
               className="search-input"
               placeholder="搜索地点名称、标签、描述..."
               value={searchKeyword}
@@ -3236,11 +3239,11 @@ function AddPlaceModal({ onClose, onAdd, prefillPosition, userLocation, selected
 
         <div className="form-group">
           <label className="form-label">地点名称 *</label>
-          <input className="form-input" value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="给地点起个名字" />
+          <input id="place-name" name="place-name" className="form-input" value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="给地点起个名字" />
         </div>
         <div className="form-group">
           <label className="form-label">分类</label>
-          <select className="form-select" value={form.category} onChange={e => setForm({...form, category: e.target.value})}>
+          <select id="place-category" name="place-category" className="form-select" value={form.category} onChange={e => setForm({...form, category: e.target.value})}>
             {Object.entries(PLACE_CATEGORY_LABEL).map(([k, v]) => (
               <option key={k} value={k}>{v}</option>
             ))}
@@ -3278,11 +3281,11 @@ function AddPlaceModal({ onClose, onAdd, prefillPosition, userLocation, selected
 
         <div className="form-group">
           <label className="form-label">描述</label>
-          <textarea className="form-textarea" value={form.desc} onChange={e => setForm({...form, desc: e.target.value})} placeholder="简单描述一下这个地方..." />
+          <textarea id="place-desc" name="place-desc" className="form-textarea" value={form.desc} onChange={e => setForm({...form, desc: e.target.value})} placeholder="简单描述一下这个地方..." />
         </div>
         <div className="form-group">
           <label className="form-label">标签（用逗号分隔）</label>
-          <input className="form-input" value={form.tags} onChange={e => setForm({...form, tags: e.target.value})} placeholder="如：安静、好玩、适合小朋友" />
+          <input id="place-tags" name="place-tags" className="form-input" value={form.tags} onChange={e => setForm({...form, tags: e.target.value})} placeholder="如：安静、好玩、适合小朋友" />
         </div>
         <div className="img-placeholder" style={{ height: 120, marginBottom: 16, background: PLACE_CATEGORY_GRAD[form.category] }}>
           {form.customIcon ? (
@@ -3364,17 +3367,17 @@ function PlayDateModal({ place, onClose, onSuccess }) {
             ))}
           </div>
           {timeOption === 'custom' && (
-            <input className="form-input" type="datetime-local" value={customTime} onChange={e => setCustomTime(e.target.value)} />
+            <input id="custom-time" name="custom-time" className="form-input" type="datetime-local" value={customTime} onChange={e => setCustomTime(e.target.value)} />
           )}
         </div>
         <div className="form-group">
           <label className="form-label">人数上限（2-20人）</label>
-          <input className="form-input" type="range" min="2" max="20" value={maxPeople} onChange={e => setMaxPeople(+e.target.value)} />
+          <input id="max-people" name="max-people" className="form-input" type="range" min="2" max="20" value={maxPeople} onChange={e => setMaxPeople(+e.target.value)} />
           <span className="text-sm text-muted">{maxPeople}人</span>
         </div>
         <div className="form-group">
           <label className="form-label">玩什么</label>
-          <textarea className="form-textarea" value={activity} onChange={e => setActivity(e.target.value)} placeholder={`比如：一起去${place.name}打篮球/散步/喝咖啡...`} />
+          <textarea id="activity-desc" name="activity-desc" className="form-textarea" value={activity} onChange={e => setActivity(e.target.value)} placeholder={`比如：一起去${place.name}打篮球/散步/喝咖啡...`} />
         </div>
         <button className="btn btn-primary btn-block btn-lg" onClick={handleSubmit}>
           <i className="fa-solid fa-paper-plane"></i> 发布约玩
@@ -3663,6 +3666,7 @@ function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen
             {/* 评论输入 */}
             <div style={{ display: 'flex', gap: 6 }}>
               <input
+                id="comment-input" name="comment-input"
                 className="form-input"
                 style={{ flex: 1, fontSize: 12, padding: '6px 10px' }}
                 value={commentText}
@@ -3716,15 +3720,15 @@ function PublishPostModal({ onClose, onPublish, currentUser }) {
         </div>
         <div className="form-group">
           <label className="form-label">标题 *</label>
-          <input className="form-input" value={form.title} onChange={e => setForm({...form, title: e.target.value})} placeholder="给你的动态起个标题" />
+          <input id="feed-title" name="feed-title" className="form-input" value={form.title} onChange={e => setForm({...form, title: e.target.value})} placeholder="给你的动态起个标题" />
         </div>
         <div className="form-group">
           <label className="form-label">正文</label>
-          <textarea className="form-textarea" value={form.content} onChange={e => setForm({...form, content: e.target.value})} placeholder="分享你的社区生活..." />
+          <textarea id="feed-content" name="feed-content" className="form-textarea" value={form.content} onChange={e => setForm({...form, content: e.target.value})} placeholder="分享你的社区生活..." />
         </div>
         <div className="form-group">
           <label className="form-label">标签（用逗号分隔）</label>
-          <input className="form-input" value={form.tags} onChange={e => setForm({...form, tags: e.target.value})} placeholder="如：遛娃、篮球、美食" />
+          <input id="feed-tags" name="feed-tags" className="form-input" value={form.tags} onChange={e => setForm({...form, tags: e.target.value})} placeholder="如：遛娃、篮球、美食" />
         </div>
         <div className="img-placeholder" style={{ height: 120, marginBottom: 16, background: 'var(--gradient-4)' }}>
           <i className="fa-solid fa-cloud-arrow-up"></i> <span style={{ marginLeft: 8 }}>暂为占位</span>
@@ -3924,7 +3928,7 @@ function ReviewSection({ placeId, reviews, addReview, updateReview, currentUser 
           </div>
           <div className="form-group">
             <label className="form-label">评价</label>
-            <textarea className="form-textarea" value={newText} onChange={e => setNewText(e.target.value)} placeholder="分享你的体验..." />
+            <textarea id="review-text" name="review-text" className="form-textarea" value={newText} onChange={e => setNewText(e.target.value)} placeholder="分享你的体验..." />
           </div>
           <div className="mb-12">
             <label className="form-label">标签</label>
@@ -4019,7 +4023,7 @@ function FriendListPage({ onChatOpen }) {
     // 更新全局变量
     SUPABASE_URL = supabaseUrl;
     SUPABASE_ANON_KEY = supabaseKey;
-    supabase = null; // 重新初始化
+    sbClient = null; // 重新初始化
     initSupabase();
     setSupabaseSaving(false);
     setShowSupabaseSetup(false);
@@ -4121,6 +4125,7 @@ function FriendListPage({ onChatOpen }) {
           <i className="fa-solid fa-magnifying-glass search-icon"></i>
           <input
             className="search-input"
+            id="friend-search" name="friend-search"
             placeholder="搜索好友或附近的人..."
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
@@ -4279,6 +4284,7 @@ CREATE POLICY "public_all" ON nearby_users
                   </p>
                   <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Project URL</label>
                   <input
+                    id="supabase-url" name="supabase-url"
                     value={supabaseUrl}
                     onChange={e => setSupabaseUrl(e.target.value)}
                     placeholder="https://xxxxx.supabase.co"
@@ -4290,6 +4296,7 @@ CREATE POLICY "public_all" ON nearby_users
                   />
                   <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Anon Key</label>
                   <input
+                    id="supabase-key" name="supabase-key"
                     value={supabaseKey}
                     onChange={e => setSupabaseKey(e.target.value)}
                     placeholder="eyJhbGciOiJIUzI1NiIs..."
@@ -4501,6 +4508,7 @@ function ChatPage({ friend, onBack }) {
         <div className="chat-input-wrapper">
           <input
             ref={inputRef}
+            id="chat-input" name="chat-input"
             className="chat-input"
             placeholder="输入消息..."
             value={inputText}
@@ -4961,6 +4969,7 @@ function ProfilePage() {
                       {/* 评价内容 */}
                       {isEditing ? (
                         <textarea
+                          id="edit-review-text" name="edit-review-text"
                           className="form-input"
                           value={editingReview.text}
                           onChange={e => setEditingReview({ ...editingReview, text: e.target.value })}
@@ -5071,6 +5080,7 @@ function ProfilePage() {
             <div className="card" style={{ padding: 16 }}>
               <h4 className="font-bold mb-12">选择主题</h4>
               <select
+                id="theme-select" name="theme-select"
                 className="form-select"
                 value={theme}
                 onChange={e => setTheme(e.target.value)}
@@ -5239,6 +5249,7 @@ function ProfilePage() {
             <div className="form-group">
               <label className="form-label"><i className="fa-solid fa-signature"></i> 昵称</label>
               <input
+                id="edit-name" name="edit-name"
                 className="form-input"
                 value={editName}
                 onChange={e => setEditName(e.target.value)}
