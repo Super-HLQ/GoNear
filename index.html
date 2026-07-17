@@ -138,6 +138,19 @@
       } catch(ex) { console.error('[Supabase] sendFriendRequestToSupabase 异常:', ex.message); return false; }
     }
 
+    async function deleteMessagesBetweenUsersToSupabase(userId1, userId2) {
+      var sb = getSupabase();
+      if (!sb || !userId1 || !userId2) return false;
+      try {
+        // 删除双向所有聊天记录：userId1↔userId2
+        var filter = 'and(sender_id.eq.' + userId1 + ',receiver_id.eq.' + userId2 + '),and(sender_id.eq.' + userId2 + ',receiver_id.eq.' + userId1 + ')';
+        var resp = await sb.from('messages').delete().or(filter);
+        if (resp.error) { console.error('[Supabase] 删除聊天记录失败:', resp.error.message); return false; }
+        console.log('[Supabase] ✅ 已删除 ' + userId1 + ' 和 ' + userId2 + ' 之间的聊天记录');
+        return true;
+      } catch(ex) { console.error('[Supabase] deleteMessagesBetweenUsersToSupabase 异常:', ex.message); return false; }
+    }
+
     async function acceptFriendRequestToSupabase(fromUserId, toUserId) {
       var sb = getSupabase();
       if (!sb || !fromUserId || !toUserId) return false;
@@ -146,7 +159,9 @@
         var r1 = await sb.from('friend_requests').update({ status: 'accepted', updated_at: new Date().toISOString() })
           .eq('from_user_id', fromUserId).eq('to_user_id', toUserId);
         if (r1.error) { console.error('[Supabase] 接受好友申请失败(update request):', r1.error.message); return false; }
-        // 2. 双向写入 friendships
+        // 2. 删除双方之前的聊天记录
+        await deleteMessagesBetweenUsersToSupabase(fromUserId, toUserId);
+        // 3. 双向写入 friendships
         var r2 = await sb.from('friendships').upsert({ user_id: fromUserId, friend_id: toUserId }, { onConflict: 'user_id,friend_id' });
         if (r2.error) { console.error('[Supabase] 接受好友申请失败(upsert A→B):', r2.error.message); return false; }
         var r3 = await sb.from('friendships').upsert({ user_id: toUserId, friend_id: fromUserId }, { onConflict: 'user_id,friend_id' });
@@ -1663,6 +1678,14 @@ function useAppState() {
         console.log('[Supabase] 收到新好友: ' + (friendData ? friendData.name : friendId));
         var newFriend = friendData || { id: friendId, name: '邻居' + friendId.slice(-4), avatar: '👤', color: '#4A90D9' };
         return [...prev, newFriend];
+      });
+      // 重新加好友时清空本地聊天记录（Supabase 端已由接受方删除）
+      setMessages(function(prev) {
+        if (!prev[friendId]) return prev;
+        var next = { ...prev };
+        delete next[friendId];
+        console.log('[Supabase] 重新加好友，已清空本地聊天记录: ' + friendId);
+        return next;
       });
     }, function(deletedFriendId) {
       // 对方删除了你，同步从本地好友列表移除并清理未读计数
@@ -5298,9 +5321,22 @@ function ChatPage({ friend, onBack }) {
     resetUnreadCount(friend.id);
   }, [friend.id]);
 
-  // 进入聊天时从 Supabase 加载历史消息
+  // 如果对方已不是好友，清空本地聊天记录（从实时删除事件同步）
   useEffect(() => {
-    if (!getSupabase() || !isSupabaseTablesReady()) return;
+    if (isNotFriend) {
+      console.log('[ChatPage] 对方已不是好友，清空聊天记录:', friend.id);
+      setMessages(function(prev) {
+        if (!prev[friend.id]) return prev;
+        var next = { ...prev };
+        delete next[friend.id];
+        return next;
+      });
+    }
+  }, [isNotFriend, friend.id]);
+
+  // 进入聊天时从 Supabase 加载历史消息（仅当仍是好友时加载）
+  useEffect(() => {
+    if (!getSupabase() || !isSupabaseTablesReady() || isNotFriend) return;
     loadMessagesFromSupabase(currentUser.id, friend.id).then(function(data) {
       if (data && Array.isArray(data) && data.length > 0) {
         console.log('[Supabase] 聊天记录加载:', data.length, '条');
