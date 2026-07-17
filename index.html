@@ -405,9 +405,13 @@ const MOCK_PLAY_DATES = [];
  */
 const fetchNearbyUsers = async (lat, lng) => {
   const sb = getSupabase();
-  if (!sb || !lat || !lng) return null; // null 表示未配置 Supabase
+  if (!sb || !lat || !lng) {
+    console.warn('[fetchNearbyUsers] 跳过: sb=', !!sb, 'lat=', lat, 'lng=', lng);
+    return null;
+  }
 
   const range = 0.1; // ~11km 粗略范围（后续精确过滤）
+  console.log('[fetchNearbyUsers] 查询范围: lat', lat - range, '~', lat + range, 'lng', lng - range, '~', lng + range);
   try {
     const { data, error } = await sb
       .from('nearby_users')
@@ -419,13 +423,18 @@ const fetchNearbyUsers = async (lat, lng) => {
       .limit(50);
 
     if (error) {
-      console.error('[Supabase] 查询附近用户失败:', error.message);
+      console.error('[fetchNearbyUsers] 查询失败:', error.message, error.details);
       return null;
     }
 
-    if (!data || data.length === 0) return [];
+    console.log('[fetchNearbyUsers] 原始结果:', data?.length || 0, '条', data ? JSON.stringify(data.map(u => u.id + ':' + u.name)) : 'null');
 
-    return data.map(u => {
+    if (!data || data.length === 0) {
+      console.log('[fetchNearbyUsers] 表中无数据，返回空');
+      return [];
+    }
+
+    const mapped = data.map(u => {
       const distance = calcDistance(lat, lng, u.lat, u.lng);
       const minutesAgo = u.last_seen
         ? Math.round((Date.now() - new Date(u.last_seen).getTime()) / 60000)
@@ -441,8 +450,11 @@ const fetchNearbyUsers = async (lat, lng) => {
           : `${Math.round(minutesAgo / 1440)}天前`,
       };
     }).filter(u => u.distance <= 5).slice(0, 30); // 5km 精确过滤
+
+    console.log('[fetchNearbyUsers] 5km过滤后:', mapped.length, '条');
+    return mapped;
   } catch (e) {
-    console.error('[Supabase] fetchNearbyUsers 异常:', e.message);
+    console.error('[fetchNearbyUsers] 异常:', e.message, e);
     return null;
   }
 };
@@ -452,9 +464,13 @@ const fetchNearbyUsers = async (lat, lng) => {
  */
 const syncUserProfile = async (user, lat, lng) => {
   const sb = getSupabase();
-  if (!sb || !user || !user.id || !lat || !lng) return;
+  if (!sb || !user || !user.id || !lat || !lng) {
+    console.warn('[syncUserProfile] 跳过: sb=', !!sb, 'user=', !!user, 'id=', user?.id, 'lat=', lat, 'lng=', lng);
+    return;
+  }
   try {
-    const { error } = await sb
+    console.log('[syncUserProfile] upsert 用户:', user.id, user.name, lat, lng);
+    const { data, error } = await sb
       .from('nearby_users')
       .upsert({
         id: user.id,
@@ -467,9 +483,13 @@ const syncUserProfile = async (user, lat, lng) => {
         last_seen: new Date().toISOString(),
       }, { onConflict: 'id' });
 
-    if (error) console.error('[Supabase] 同步用户失败:', error.message);
+    if (error) {
+      console.error('[syncUserProfile] upsert 失败:', error.message, error.details, error.hint);
+    } else {
+      console.log('[syncUserProfile] upsert 成功, 返回行数:', data?.length);
+    }
   } catch (e) {
-    console.error('[Supabase] syncUserProfile 异常:', e.message);
+    console.error('[Supabase] syncUserProfile 异常:', e.message, e);
   }
 };
 
@@ -1039,6 +1059,7 @@ function useAppState() {
 
   // 刷新附近用户（优先 Supabase，回退本地存储）
   const refreshNearbyUsers = useCallback(async (lat, lng) => {
+    console.log('[refreshNearbyUsers] 开始: 当前用户', currentUser?.id, '位置', lat, lng);
     if (!lat || !lng) return setNearbyUsers([]);
 
     // 始终同步当前用户到 Supabase（必须先完成再查询，否则查不到自己刚写入的数据）
@@ -1055,10 +1076,12 @@ function useAppState() {
 
     if (result != null) {
       // Supabase 有数据
+      console.log('[refreshNearbyUsers] 结果:', result.length, '条用户, IDs:', result.map(u => u.id).join(','));
       setNearbyUsers(result);
       localStorage.setItem('nlqw_nearby_users', JSON.stringify(result));
     } else {
       // Supabase 查询失败，使用缓存或空列表
+      console.warn('[refreshNearbyUsers] 查询失败(result=null)，回退缓存');
       var cached = null;
       try {
         var s = localStorage.getItem('nlqw_nearby_users');
