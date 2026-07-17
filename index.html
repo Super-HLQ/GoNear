@@ -1554,6 +1554,12 @@ function useAppState() {
         delete next[deletedFriendId];
         return next;
       });
+      setMessages(function(prev) {
+        if (!prev[deletedFriendId]) return prev;
+        var next = { ...prev };
+        delete next[deletedFriendId];
+        return next;
+      });
       console.log('[Supabase] 好友关系已同步删除: ' + deletedFriendId);
     });
     return function() {
@@ -1821,6 +1827,13 @@ function useAppState() {
     setRemovedFriendIds(function(prev) {
       var next = new Set(prev);
       next.add(friendId);
+      return next;
+    });
+    // 删除好友时清理聊天记录
+    setMessages(function(prev) {
+      if (!prev[friendId]) return prev;
+      var next = { ...prev };
+      delete next[friendId];
       return next;
     });
     // 删除好友时清零该好友的未读数
@@ -4990,6 +5003,13 @@ function ChatPage({ friend, onBack }) {
   const chatMessages = getChatMessages(friend.id);
   const isNotFriend = !friends.some(f => f.id === friend.id);
 
+  // 对方已不是好友时自动关闭聊天窗口
+  useEffect(() => {
+    if (isNotFriend) {
+      onBack();
+    }
+  }, [isNotFriend]);
+
   // 进入聊天时清零该好友的未读数
   useEffect(() => {
     resetUnreadCount(friend.id);
@@ -5026,10 +5046,10 @@ function ChatPage({ friend, onBack }) {
   }, []);
 
   const handleSend = () => {
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || isNotFriend) return;
     sendMessage(friend.id, inputText);
     setInputText('');
-  };
+  }; 
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
