@@ -1940,7 +1940,7 @@ function MapPage() {
 
       {/* 添加新地点弹窗 */}
       {showAddForm && (
-        <AddPlaceModal onClose={() => setShowAddForm(false)} onAdd={addPlace} userLocation={userLocation} selectedCity={selectedCity} />
+        <AddPlaceModal onClose={() => setShowAddForm(false)} onAdd={addPlace} userLocation={userLocation} />
       )}
 
       {/* 地图点击标记弹窗 */}

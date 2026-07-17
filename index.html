@@ -2013,14 +2013,6 @@ function MapPage() {
     };
   }, [userLocation, viewMode]);
 
-  // 选择城市后地图飞行到目标城市
-  useEffect(() => {
-    if (!mapInstanceRef.current || !mapReady) return;
-    if (selectedCity && selectedCity.lat != null && selectedCity.lng != null) {
-      mapInstanceRef.current.flyTo([selectedCity.lat, selectedCity.lng], 13, { duration: 1.2 });
-    }
-  }, [selectedCity, mapReady]);
-
   // 同步 markMode 到 ref，确保地图事件中能获取最新值
   useEffect(() => {
     markModeRef.current = markMode;
@@ -2503,10 +2495,10 @@ function MapPage() {
         <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>
           <i className="fa-solid fa-map-location-dot text-accent"></i> 探索周边
           {globalUserLocation && (
-            <span className={`tag ${selectedCity ? 'tag-purple' : 'tag-green'}`} style={{ marginLeft: 8, fontSize: 11 }}>
-              <i className={selectedCity ? 'fa-solid fa-city' : 'fa-solid fa-location-dot'}></i>
+            <span className="tag tag-green" style={{ marginLeft: 8, fontSize: 11 }}>
+              <i className="fa-solid fa-location-dot"></i>
               {' '}
-              {selectedCity ? selectedCity.name + ' · ' + filteredPlaces.length + ' 个地点' : '已定位 · ' + filteredPlaces.length + ' 个地点'}
+              已定位 · {filteredPlaces.length} 个地点
             </span>
           )}
           {searchingNearby && (
@@ -2542,26 +2534,6 @@ function MapPage() {
           </button>
         </div>
 
-        {/* 城市指示器 */}
-        <div className="map-city-bar">
-          <button
-            className={`map-city-btn ${selectedCity ? 'map-city-btn-active' : ''}`}
-            onClick={() => setShowCityPicker(true)}
-          >
-            <i className="fa-solid fa-city"></i>
-            <span>{selectedCity ? selectedCity.name : '选择城市'}</span>
-            <i className="fa-solid fa-chevron-down map-city-arrow"></i>
-          </button>
-          {selectedCity && (
-            <button
-              className="map-city-reset"
-              onClick={() => selectCity(null)}
-              title="恢复 GPS 定位"
-            >
-              <i className="fa-solid fa-xmark"></i>
-            </button>
-          )}
-        </div>
 
         {/* 分类筛选 & 排序（可折叠） */}
         {(showFilters || activeCategory !== 'all') && (
