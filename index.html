@@ -1041,8 +1041,8 @@ function useAppState() {
   const refreshNearbyUsers = useCallback(async (lat, lng) => {
     if (!lat || !lng) return setNearbyUsers([]);
 
-    // 始终同步当前用户到 Supabase
-    syncUserProfile(currentUser, lat, lng);
+    // 始终同步当前用户到 Supabase（必须先完成再查询，否则查不到自己刚写入的数据）
+    await syncUserProfile(currentUser, lat, lng);
 
     // 配置状态仅取决于凭证是否存在，不因查询失败而改变
     setSupabaseReady(!!(SUPABASE_URL && SUPABASE_ANON_KEY));
