@@ -1286,6 +1286,9 @@ function useAppState() {
   const friendsRef = useRef(friends);
   useEffect(() => { friendsRef.current = friends; }, [friends]);
 
+  // 追踪已删除的好友 ID，用于在发现列表中显示红色提示
+  const [removedFriendIds, setRemovedFriendIds] = useState(new Set());
+
   // 聊天消息 { friendId: [{ id, from, text, time }] }
   const [messages, setMessages] = useState(() => {
     const saved = localStorage.getItem('nlqw_messages');
@@ -1733,10 +1736,23 @@ function useAppState() {
       });
       return [...prev, newFriend];
     });
+    // 重新添加后从已删除列表移除
+    setRemovedFriendIds(function(prev) {
+      if (!prev.has(userId)) return prev;
+      var next = new Set(prev);
+      next.delete(userId);
+      return next;
+    });
   }, [nearbyUsers, currentUser.id]);
 
   const removeFriend = useCallback((friendId) => {
     setFriends(prev => prev.filter(f => f.id !== friendId));
+    // 记录到已删除列表，用于在发现页显示红色提示
+    setRemovedFriendIds(function(prev) {
+      var next = new Set(prev);
+      next.add(friendId);
+      return next;
+    });
     // 删除好友时清零该好友的未读数
     setUnreadCounts(function(prev) {
       if (!prev[friendId]) return prev;
@@ -1858,7 +1874,7 @@ function useAppState() {
     currentUser, updateCurrentUser,
     userLocation, setUserLocation,
     nearbyPois, searchNearby, searchingNearby, nearbySearchError,
-    friends, addFriend, removeFriend, getFriends,
+    friends, addFriend, removeFriend, getFriends, removedFriendIds,
     messages, sendMessage, getChatMessages,
     unreadCounts, resetUnreadCount,
     nearbyUsers, refreshNearbyUsers,
@@ -4427,7 +4443,7 @@ function ReviewSection({ placeId, reviews, addReview, updateReview, currentUser 
 
 // ==================== 组件：好友列表（基于真实定位的附近的人）====================
 function FriendListPage({ onChatOpen }) {
-  const { friends, removeFriend, addFriend, messages, unreadCounts, nearbyUsers, refreshNearbyUsers, userLocation, setUserLocation, selectedCity, selectCity, supabaseReady, currentUser } = useApp();
+  const { friends, removeFriend, addFriend, messages, unreadCounts, nearbyUsers, refreshNearbyUsers, userLocation, setUserLocation, selectedCity, selectCity, supabaseReady, currentUser, removedFriendIds } = useApp();
   const [activeTab, setActiveTab] = useState('myFriends');
   const [searchText, setSearchText] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -4516,12 +4532,18 @@ function FriendListPage({ onChatOpen }) {
     const friendIds = new Set(friends.map(f => f.id));
     const filtered = nearbyUsers.filter(u =>
       u.id !== currentUser.id &&   // 排除自己
-      !friendIds.has(u.id) &&
+      !friendIds.has(u.id) &&      // 排除当前好友
       u.online &&                  // 只显示在线用户
       (searchText === '' || u.name.includes(searchText) || u.intro.includes(searchText))
-    );
+    ).map(u => {
+      // 如果是已删除的好友，打上标记
+      if (removedFriendIds.has(u.id)) {
+        return { ...u, isRemoved: true };
+      }
+      return u;
+    });
     return filtered.sort((a, b) => (a.distance || 999) - (b.distance || 999));
-  }, [friends, searchText, nearbyUsers, userLocation, currentUser.id]);
+  }, [friends, searchText, nearbyUsers, userLocation, currentUser.id, removedFriendIds]);
 
   const searchFriends = useMemo(() => {
     if (!searchText) return friends;
@@ -4786,7 +4808,7 @@ CREATE POLICY "public_all" ON nearby_users
           {userLocation && discoverUsers.length > 0 && (
             <div className="friend-list">
               {discoverUsers.map(user => (
-                <div key={user.id} className="friend-card card">
+                <div key={user.id} className="friend-card card" style={user.isRemoved ? { borderLeft: '3px solid #E53E3E' } : {}}>
                   <div className="friend-avatar" style={{ background: user.color || 'var(--gradient-1)' }}>
                     {user.avatar}
                   </div>
@@ -4794,6 +4816,12 @@ CREATE POLICY "public_all" ON nearby_users
                     <div className="friend-name">
                       {user.name}
                       {user.online && <span className="online-dot"></span>}
+                      {user.isRemoved && (
+                        <span style={{
+                          background: '#FFF0F0', color: '#C53030', fontSize: 10, fontWeight: 600,
+                          padding: '1px 6px', borderRadius: 4, marginLeft: 6, border: '1px solid #FFB8B8'
+                        }}>已不是好友</span>
+                      )}
                     </div>
                     <div className="friend-preview text-muted text-sm">
                       <span className="nearby-distance">
@@ -4802,6 +4830,11 @@ CREATE POLICY "public_all" ON nearby_users
                       <span className="nearby-sep">·</span>
                       {user.intro}
                     </div>
+                    {user.isRemoved && (
+                      <div style={{ color: '#C53030', fontSize: 11, marginTop: 2 }}>
+                        <i className="fa-solid fa-circle-exclamation"></i> 不能发消息，但可重新添加
+                      </div>
+                    )}
                   </div>
                   {justAdded[user.id] ? (
                     <span className="btn btn-sm" style={{ background: 'var(--success)', color: '#fff', borderRadius: 8, fontSize: 12, padding: '4px 12px' }}>
@@ -4819,7 +4852,7 @@ CREATE POLICY "public_all" ON nearby_users
                         }, 2000);
                       }}
                     >
-                      <i className="fa-solid fa-plus"></i> 添加
+                      <i className="fa-solid fa-plus"></i> {user.isRemoved ? '重新添加' : '添加'}
                     </button>
                   )}
                 </div>
