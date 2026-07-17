@@ -1832,7 +1832,7 @@ function MapPage() {
   const [activeCategory, setActiveCategory] = useState('all');
   const [sortBy, setSortBy] = useState('distance');
   const [showFilters, setShowFilters] = useState(false);
-  const [showCityPicker, setShowCityPicker] = useState(false);
+
 
   // Leaflet 地图相关
   const mapContainerRef = useRef(null);
@@ -3037,14 +3037,6 @@ function MapPage() {
           <i className="fa-solid fa-thumbtack"></i> 点击地图任意位置放置标记
         </div>
       )}
-
-      {/* 城市选择弹窗 */}
-      <CityPickerModal
-        show={showCityPicker}
-        onClose={() => setShowCityPicker(false)}
-        selectedCity={selectedCity}
-        onSelectCity={selectCity}
-      />
 
     </div>
   );
