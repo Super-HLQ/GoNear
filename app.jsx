@@ -212,9 +212,27 @@ const removeFavoriteFromSupabase = async (userId, itemId, itemType) => {
   } catch(ex) { console.error('[Supabase] removeFavoriteFromSupabase 异常:', ex.message); return false; }
 };
 
+const deletePostFromSupabase = async (postId) => {
+  const sb = getSupabase(); if (!sb || !postId) return false;
+  try {
+    const resp = await sb.from('posts').delete().eq('id', postId);
+    if (resp.error) { console.error('[Supabase] 删除帖子失败:', resp.error.message); return false; }
+    return true;
+  } catch(ex) { console.error('[Supabase] deletePostFromSupabase 异常:', ex.message); return false; }
+};
+
+const deleteCommentFromSupabase = async (commentId) => {
+  const sb = getSupabase(); if (!sb || !commentId) return false;
+  try {
+    const resp = await sb.from('post_comments').delete().eq('comment_id', commentId);
+    if (resp.error) { console.error('[Supabase] 删除评论失败:', resp.error.message); return false; }
+    return true;
+  } catch(ex) { console.error('[Supabase] deleteCommentFromSupabase 异常:', ex.message); return false; }
+};
+
 // ===== Supabase 实时订阅 =====
 
-const subscribeToCommunityPosts = (onNewPost, onPostUpdate) => {
+const subscribeToCommunityPosts = (onNewPost, onPostUpdate, onPostDelete) => {
   const sb = getSupabase(); if (!sb) return null;
   try {
     const channel = sb.channel('community-posts')
@@ -235,6 +253,9 @@ const subscribeToCommunityPosts = (onNewPost, onPostUpdate) => {
           onPostUpdate(payload.new.id, { likes: payload.new.likes, comments: payload.new.comments_count });
         }
       })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'posts' }, payload => {
+        if (payload.old && onPostDelete) onPostDelete(payload.old.id);
+      })
       .subscribe(status => {
         if (status === 'SUBSCRIBED') console.log('[Supabase] 社区帖子订阅成功');
         else if (status === 'CHANNEL_ERROR') console.error('[Supabase] 社区帖子订阅错误');
@@ -243,7 +264,7 @@ const subscribeToCommunityPosts = (onNewPost, onPostUpdate) => {
   } catch(ex) { console.error('[Supabase] subscribeToCommunityPosts 异常:', ex.message); return null; }
 };
 
-const subscribeToCommunityComments = (onNewComment) => {
+const subscribeToCommunityComments = (onNewComment, onCommentDelete) => {
   const sb = getSupabase(); if (!sb) return null;
   try {
     const channel = sb.channel('community-comments')
@@ -255,6 +276,9 @@ const subscribeToCommunityComments = (onNewComment) => {
             text: c.text, time: c.time || '刚刚', postId: c.post_id, postTitle: c.post_title || ''
           });
         }
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'post_comments' }, payload => {
+        if (payload.old && onCommentDelete) onCommentDelete(payload.old.post_id, payload.old.comment_id);
       })
       .subscribe(status => {
         if (status === 'SUBSCRIBED') console.log('[Supabase] 社区评论订阅成功');
@@ -951,6 +975,11 @@ function useAppState() {
     savePostToSupabase(newPost).catch(e => console.warn('[Supabase] savePostToSupabase 异常:', e));
   }, []);
 
+  const deletePost = useCallback((postId) => {
+    setPosts(prev => prev.filter(p => p.id !== postId));
+    deletePostFromSupabase(postId).catch(e => console.warn('[Supabase] deletePost 异常:', e));
+  }, []);
+
   // 更新约玩
   const updatePlayDate = useCallback((playId, updates) => {
     setPlayDates(prev => prev.map(p => p.id === playId ? { ...p, ...updates } : p));
@@ -1024,9 +1053,10 @@ function useAppState() {
       if (newComments[postId]) {
         newComments[postId] = newComments[postId].filter(c => c.id !== commentId);
       }
-      localStorage.setItem('nlqw_post_comments', JSON.stringify(newComments));
       return newComments;
     });
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, comments: Math.max(0, (p.comments || 1) - 1) } : p));
+    deleteCommentFromSupabase(commentId).catch(e => console.warn('[Supabase] deleteComment 异常:', e));
   }, []);
 
 
@@ -1184,6 +1214,10 @@ function useAppState() {
           if (updates.comments !== undefined) updated.comments = updates.comments;
           return updated;
         }));
+      },
+      (postId) => {
+        setPosts(prev => prev.filter(p => p.id !== postId));
+        setPostComments(prev => { const nc = { ...prev }; delete nc[postId]; return nc; });
       }
     );
     return () => { if (channel) { try { channel.unsubscribe(); } catch(e) {} } };
@@ -1203,6 +1237,13 @@ function useAppState() {
         return newComments;
       });
       setPosts(prev => prev.map(p => p.id === newComment.postId ? { ...p, comments: (p.comments || 0) + 1 } : p));
+    }, (postId, commentId) => {
+      setPostComments(prev => {
+        const nc = { ...prev };
+        if (nc[postId]) nc[postId] = nc[postId].filter(c => c.id !== commentId);
+        return nc;
+      });
+      setPosts(prev => prev.map(p => p.id === postId ? { ...p, comments: Math.max(0, (p.comments || 1) - 1) } : p));
     });
     return () => { if (channel) { try { channel.unsubscribe(); } catch(e) {} } };
   }, []);
@@ -1212,7 +1253,7 @@ function useAppState() {
     weather, setWeather, aqi, setAqi, hour,
     places: allPlaces, customPlaces, addPlace,
     nearbyPois, searchNearby, searchingNearby,
-    posts, updatePost, addPost,
+    posts, updatePost, addPost, deletePost,
     playDates, updatePlayDate, addPlayDate, deletePlayDate,
     reviews, addReview, updateReview, deleteReview,
     favorites, toggleFavorite, isFavorite,
@@ -2504,7 +2545,7 @@ function PlayDateModal({ place, onClose, onSuccess }) {
 
 // 社区广场（瀑布流）
 function CommunityPage() {
-  const { posts, updatePost, addPost, toggleFavorite, isFavorite, currentUser, postComments, addPostComment } = useApp();
+  const { posts, updatePost, addPost, deletePost, toggleFavorite, isFavorite, currentUser, postComments, addPostComment, deletePostComment } = useApp();
   const [sortBy, setSortBy] = useState('latest'); // 'latest' | 'hot'
   const [showPublish, setShowPublish] = useState(false);
   const [likedPosts, setLikedPosts] = useState(() => {
@@ -2540,6 +2581,16 @@ function CommunityPage() {
   const handleAddPostComment = (postId, text) => {
     if (!text.trim()) return;
     addPostComment(postId, text, currentUser);
+  };
+
+  const handleDeletePost = (postId) => {
+    if (!confirm('确定要删除这条帖子吗？相关评论和点赞也会被删除。')) return;
+    deletePost(postId);
+  };
+
+  const handleDeleteComment = (postId, commentId) => {
+    if (!confirm('确定要删除这条评论吗？')) return;
+    deletePostComment(postId, commentId);
   };
 
   useEffect(() => {
@@ -2592,6 +2643,8 @@ function CommunityPage() {
               onToggleComment={() => setActiveCommentPostId(activeCommentPostId === post.id ? null : post.id)}
               onAddComment={(text) => handleAddPostComment(post.id, text)}
               currentUser={currentUser}
+              onDelete={handleDeletePost}
+              onDeleteComment={handleDeleteComment}
             />
           ))}
         </div>
@@ -2609,6 +2662,8 @@ function CommunityPage() {
               onToggleComment={() => setActiveCommentPostId(activeCommentPostId === post.id ? null : post.id)}
               onAddComment={(text) => handleAddPostComment(post.id, text)}
               currentUser={currentUser}
+              onDelete={handleDeletePost}
+              onDeleteComment={handleDeleteComment}
             />
           ))}
         </div>
@@ -2622,7 +2677,7 @@ function CommunityPage() {
   );
 }
 
-function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen, onToggleComment, onAddComment, currentUser }) {
+function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen, onToggleComment, onAddComment, currentUser, onDelete, onDeleteComment }) {
   const [heartAnim, setHeartAnim] = useState(false);
   const [commentText, setCommentText] = useState('');
 
@@ -2651,8 +2706,20 @@ function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen
         height: 120,
         background: GRAD_MAP[post.imageGrad] || 'var(--gradient-1)',
         borderRadius: '12px 12px 0 0',
+        position: 'relative',
       }}>
         <i className="fa-solid fa-image" style={{ fontSize: 28, opacity: 0.6 }}></i>
+        {currentUser && post.userId === currentUser.id && (
+          <button onClick={() => onDelete && onDelete(post.id)} style={{
+            position: 'absolute', top: 8, right: 8,
+            background: 'rgba(0,0,0,0.4)', color: '#fff',
+            border: 'none', borderRadius: 6,
+            width: 28, height: 28, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
+          }} title="删除帖子">
+            <i className="fa-solid fa-trash-can"></i>
+          </button>
+        )}
       </div>
       <div style={{ padding: 10 }}>
         <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 6, lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
@@ -2705,7 +2772,18 @@ function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen
                   <div key={c.id} style={{ marginBottom: 8, padding: '6px 8px', background: 'var(--secondary-bg)', borderRadius: 8 }}>
                     <div className="flex-between" style={{ marginBottom: 2 }}>
                       <span className="text-xs" style={{ fontWeight: 600 }}>{c.userName}</span>
-                      <span className="text-xs" style={{ color: 'var(--nav-inactive)' }}>{c.time}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className="text-xs" style={{ color: 'var(--nav-inactive)' }}>{c.time}</span>
+                        {currentUser && c.userId === currentUser.id && (
+                          <button
+                            onClick={() => onDeleteComment && onDeleteComment(post.id, c.id)}
+                            style={{ background: 'none', border: 'none', color: '#FF4D4F', cursor: 'pointer', fontSize: 11, padding: 0 }}
+                            title="删除评论"
+                          >
+                            <i className="fa-solid fa-xmark"></i>
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs" style={{ margin: 0, lineHeight: 1.5 }}>{c.text}</p>
                   </div>

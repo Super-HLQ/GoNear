@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -588,8 +588,32 @@
       } catch(ex) { console.error('[Supabase] removeFavoriteFromSupabase 异常:', ex.message); return false; }
     }
 
+    // 删除帖子
+    async function deletePostFromSupabase(postId) {
+      var sb = getSupabase();
+      if (!sb || !postId) return false;
+      try {
+        var resp = await sb.from('posts').delete().eq('id', postId);
+        if (resp.error) { console.error('[Supabase] 删除帖子失败:', resp.error.message); return false; }
+        console.log('[Supabase] 帖子已删除:', postId);
+        return true;
+      } catch(ex) { console.error('[Supabase] deletePostFromSupabase 异常:', ex.message); return false; }
+    }
+
+    // 删除评论
+    async function deleteCommentFromSupabase(commentId) {
+      var sb = getSupabase();
+      if (!sb || !commentId) return false;
+      try {
+        var resp = await sb.from('post_comments').delete().eq('comment_id', commentId);
+        if (resp.error) { console.error('[Supabase] 删除评论失败:', resp.error.message); return false; }
+        console.log('[Supabase] 评论已删除:', commentId);
+        return true;
+      } catch(ex) { console.error('[Supabase] deleteCommentFromSupabase 异常:', ex.message); return false; }
+    }
+
     // ===== Supabase 社区实时订阅 =====
-    function subscribeToCommunityPosts(onNewPost, onPostUpdate) {
+    function subscribeToCommunityPosts(onNewPost, onPostUpdate, onPostDelete) {
       var sb = getSupabase();
       if (!sb) return null;
       try {
@@ -611,6 +635,12 @@
               onPostUpdate(payload.new.id, { likes: payload.new.likes, comments: payload.new.comments_count });
             }
           })
+          .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'posts' }, function(payload) {
+            if (payload.old && onPostDelete) {
+              console.log('[Supabase] 收到帖子删除: ' + payload.old.id);
+              onPostDelete(payload.old.id);
+            }
+          })
           .subscribe(function(status) {
             if (status === 'SUBSCRIBED') console.log('[Supabase] 社区帖子订阅成功');
             else if (status === 'CHANNEL_ERROR') console.error('[Supabase] 社区帖子订阅错误');
@@ -619,7 +649,7 @@
       } catch(ex) { console.error('[Supabase] subscribeToCommunityPosts 异常:', ex.message); return null; }
     }
 
-    function subscribeToCommunityComments(onNewComment) {
+    function subscribeToCommunityComments(onNewComment, onCommentDelete) {
       var sb = getSupabase();
       if (!sb) return null;
       try {
@@ -632,6 +662,12 @@
                 text: c.text, time: c.time || '刚刚', postId: c.post_id,
                 postTitle: c.post_title || ''
               });
+            }
+          })
+          .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'post_comments' }, function(payload) {
+            if (payload.old && onCommentDelete) {
+              console.log('[Supabase] 收到评论删除: ' + payload.old.comment_id);
+              onCommentDelete(payload.old.post_id, payload.old.comment_id);
             }
           })
           .subscribe(function(status) {
@@ -2109,6 +2145,19 @@ function useAppState() {
             return updated;
           });
         });
+      },
+      // 帖子删除回调
+      function(postId) {
+        setPosts(function(prev) {
+          console.log('[Supabase] 帖子被删除:', postId);
+          return prev.filter(function(p) { return p.id !== postId; });
+        });
+        // 同步清理相关评论
+        setPostComments(function(prev) {
+          var nc = { ...prev };
+          delete nc[postId];
+          return nc;
+        });
       }
     );
     return function() {
@@ -2140,6 +2189,23 @@ function useAppState() {
         return prev.map(function(p) {
           if (p.id !== newComment.postId) return p;
           return { ...p, comments: (p.comments || 0) + 1 };
+        });
+      });
+    }, function(postId, commentId) {
+      // 评论删除回调
+      setPostComments(function(prev) {
+        var nc = { ...prev };
+        if (nc[postId]) {
+          nc[postId] = nc[postId].filter(function(c) { return c.id !== commentId; });
+          console.log('[Supabase] 评论被删除:', commentId, '帖子:', postId);
+        }
+        return nc;
+      });
+      // 同步更新帖子评论数
+      setPosts(function(prev) {
+        return prev.map(function(p) {
+          if (p.id !== postId) return p;
+          return { ...p, comments: Math.max(0, (p.comments || 1) - 1) };
         });
       });
     });
@@ -2392,6 +2458,12 @@ function useAppState() {
     savePostToSupabase(newPost).catch(function(e) { console.warn('[Supabase] savePostToSupabase 异常:', e); });
   }, []);
 
+  const deletePost = useCallback((postId) => {
+    setPosts(prev => prev.filter(p => p.id !== postId));
+    // 同步到 Supabase
+    deletePostFromSupabase(postId).catch(function(e) { console.warn('[Supabase] deletePostFromSupabase 异常:', e); });
+  }, []);
+
   // 更新约玩
   const updatePlayDate = useCallback((playId, updates) => {
     setPlayDates(prev => prev.map(p => p.id === playId ? { ...p, ...updates } : p));
@@ -2468,8 +2540,11 @@ function useAppState() {
       }
       return newComments;
     });
+    // 同步更新帖子评论数
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, comments: Math.max(0, (p.comments || 1) - 1) } : p));
+    // 同步到 Supabase
+    deleteCommentFromSupabase(commentId).catch(function(e) { console.warn('[Supabase] deleteCommentFromSupabase 异常:', e); });
   }, []);
-
 
 
   // 收藏管理
@@ -2673,7 +2748,7 @@ function useAppState() {
     currentPage, setCurrentPage,
     weather, setWeather, aqi, setAqi, hour,
     places: allPlaces, customPlaces, addPlace,
-    posts, updatePost, addPost,
+    posts, updatePost, addPost, deletePost,
     playDates, updatePlayDate, addPlayDate, deletePlayDate,
     reviews, addReview, updateReview, deleteReview,
     favorites, toggleFavorite, isFavorite,
@@ -4644,9 +4719,10 @@ function PlayDateModal({ place, onClose, onSuccess }) {
 
 // 社区广场（瀑布流）
 function CommunityPage() {
-  const { posts, updatePost, addPost, toggleFavorite, isFavorite, currentUser, postComments, addPostComment, userLocation, places, nearbyPois, supabaseReady } = useApp();
+  const { posts, updatePost, addPost, deletePost, toggleFavorite, isFavorite, currentUser, postComments, addPostComment, deletePostComment, userLocation, places, nearbyPois, supabaseReady } = useApp();
   const [sortBy, setSortBy] = useState('latest'); // 'latest' | 'hot'
   const [showPublish, setShowPublish] = useState(false);
+  const [deletePostId, setDeletePostId] = useState(null); // 待删除帖子ID（用于确认弹窗）
   const [likedPosts, setLikedPosts] = useState(() => {
     const saved = localStorage.getItem('nlqw_liked_posts');
     return saved ? JSON.parse(saved) : [];
@@ -4706,6 +4782,16 @@ function CommunityPage() {
   const handleAddPostComment = (postId, text, postTitle) => {
     if (!text.trim()) return;
     addPostComment(postId, text, currentUser, postTitle);
+  };
+
+  const handleDeletePost = (postId) => {
+    if (!confirm('确定要删除这条帖子吗？相关评论和点赞也会被删除。')) return;
+    deletePost(postId);
+  };
+
+  const handleDeleteComment = (postId, commentId) => {
+    if (!confirm('确定要删除这条评论吗？')) return;
+    deletePostComment(postId, commentId);
   };
 
   useEffect(() => {
@@ -4814,6 +4900,8 @@ function CommunityPage() {
               onToggleComment={() => setActiveCommentPostId(activeCommentPostId === post.id ? null : post.id)}
               onAddComment={(text, postTitle) => handleAddPostComment(post.id, text, postTitle)}
               currentUser={currentUser}
+              onDelete={handleDeletePost}
+              onDeleteComment={handleDeleteComment}
             />
           ))}
         </div>
@@ -4831,6 +4919,8 @@ function CommunityPage() {
               onToggleComment={() => setActiveCommentPostId(activeCommentPostId === post.id ? null : post.id)}
               onAddComment={(text, postTitle) => handleAddPostComment(post.id, text, postTitle)}
               currentUser={currentUser}
+              onDelete={handleDeletePost}
+              onDeleteComment={handleDeleteComment}
             />
           ))}
         </div>
@@ -4844,7 +4934,7 @@ function CommunityPage() {
   );
 }
 
-function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen, onToggleComment, onAddComment, currentUser }) {
+function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen, onToggleComment, onAddComment, currentUser, onDelete, onDeleteComment }) {
   const [heartAnim, setHeartAnim] = useState(false);
   const [commentText, setCommentText] = useState('');
 
@@ -4873,8 +4963,25 @@ function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen
         height: 120,
         background: GRAD_MAP[post.imageGrad] || 'var(--gradient-1)',
         borderRadius: '12px 12px 0 0',
+        position: 'relative',
       }}>
         <i className="fa-solid fa-image" style={{ fontSize: 28, opacity: 0.6 }}></i>
+        {currentUser && post.userId === currentUser.id && (
+          <button
+            onClick={() => onDelete && onDelete(post.id)}
+            style={{
+              position: 'absolute', top: 8, right: 8,
+              background: 'rgba(0,0,0,0.4)', color: '#fff',
+              border: 'none', borderRadius: 6,
+              width: 28, height: 28, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 12,
+            }}
+            title="删除帖子"
+          >
+            <i className="fa-solid fa-trash-can"></i>
+          </button>
+        )}
       </div>
       <div style={{ padding: 10 }}>
         <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 6, lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
@@ -4927,7 +5034,18 @@ function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen
                   <div key={c.id} style={{ marginBottom: 8, padding: '6px 8px', background: 'var(--secondary-bg)', borderRadius: 8 }}>
                     <div className="flex-between" style={{ marginBottom: 2 }}>
                       <span className="text-xs" style={{ fontWeight: 600 }}>{c.userName}</span>
-                      <span className="text-xs" style={{ color: 'var(--nav-inactive)' }}>{c.time}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className="text-xs" style={{ color: 'var(--nav-inactive)' }}>{c.time}</span>
+                        {currentUser && c.userId === currentUser.id && (
+                          <button
+                            onClick={() => onDeleteComment && onDeleteComment(post.id, c.id)}
+                            style={{ background: 'none', border: 'none', color: '#FF4D4F', cursor: 'pointer', fontSize: 11, padding: 0 }}
+                            title="删除评论"
+                          >
+                            <i className="fa-solid fa-xmark"></i>
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs" style={{ margin: 0, lineHeight: 1.5 }}>{c.text}</p>
                   </div>
