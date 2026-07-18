@@ -230,6 +230,102 @@ const deleteCommentFromSupabase = async (commentId) => {
   } catch(ex) { console.error('[Supabase] deleteCommentFromSupabase 异常:', ex.message); return false; }
 };
 
+// ===== Supabase 好友申请 =====
+
+const sendFriendRequestToSupabase = async (fromUserId, toUserId) => {
+  const sb = getSupabase(); if (!sb || !fromUserId || !toUserId) return false;
+  try {
+    const resp = await sb.from('friend_requests').upsert(
+      { from_user_id: fromUserId, to_user_id: toUserId, status: 'pending', updated_at: new Date().toISOString() },
+      { onConflict: 'from_user_id,to_user_id' }
+    );
+    if (resp.error) { console.error('[Supabase] 发送好友申请失败:', resp.error.message); return false; }
+    return true;
+  } catch(ex) { console.error('[Supabase] sendFriendRequestToSupabase 异常:', ex.message); return false; }
+};
+
+const acceptFriendRequestToSupabase = async (fromUserId, toUserId) => {
+  const sb = getSupabase(); if (!sb || !fromUserId || !toUserId) return false;
+  try {
+    const r1 = await sb.from('friend_requests').update({ status: 'accepted', updated_at: new Date().toISOString() })
+      .eq('from_user_id', fromUserId).eq('to_user_id', toUserId);
+    if (r1.error) { console.error('[Supabase] 更新申请状态失败:', r1.error.message); return false; }
+    const r2 = await sb.from('friendships').upsert({ user_id: fromUserId, friend_id: toUserId }, { onConflict: 'user_id,friend_id' });
+    if (r2.error) { console.error('[Supabase] 接受好友申请失败(upsert A→B):', r2.error.message); return false; }
+    const r3 = await sb.from('friendships').upsert({ user_id: toUserId, friend_id: fromUserId }, { onConflict: 'user_id,friend_id' });
+    if (r3.error) { console.error('[Supabase] 接受好友申请失败(upsert B→A):', r3.error.message); return false; }
+    return true;
+  } catch(ex) { console.error('[Supabase] acceptFriendRequestToSupabase 异常:', ex.message); return false; }
+};
+
+const rejectFriendRequestToSupabase = async (fromUserId, toUserId) => {
+  const sb = getSupabase(); if (!sb || !fromUserId || !toUserId) return false;
+  try {
+    const resp = await sb.from('friend_requests').update({ status: 'rejected', updated_at: new Date().toISOString() })
+      .eq('from_user_id', fromUserId).eq('to_user_id', toUserId);
+    if (resp.error) { console.error('[Supabase] 拒绝好友申请失败:', resp.error.message); return false; }
+    return true;
+  } catch(ex) { console.error('[Supabase] rejectFriendRequestToSupabase 异常:', ex.message); return false; }
+};
+
+const loadFriendRequestsFromSupabase = async (userId) => {
+  const sb = getSupabase(); if (!sb || !userId) return [];
+  try {
+    const resp = await sb.from('friend_requests').select('*').eq('to_user_id', userId).eq('status', 'pending').order('created_at', { ascending: false });
+    if (resp.error || !resp.data || !resp.data.length) return [];
+    const fromIds = resp.data.map(r => r.from_user_id);
+    const pResp = await sb.from('nearby_users').select('*').in('id', fromIds);
+    const userMap = {};
+    if (pResp.data) pResp.data.forEach(p => { userMap[p.id] = p; });
+    return resp.data.map(r => {
+      const u = userMap[r.from_user_id];
+      return {
+        id: r.id, fromUserId: r.from_user_id, toUserId: r.to_user_id, status: r.status, createdAt: r.created_at,
+        fromUserName: u ? u.name : ('邻居' + r.from_user_id.slice(-4)),
+        fromUserAvatar: u ? (u.avatar || '👤') : '👤',
+        fromUserColor: u ? (u.color || '#4A90D9') : '#4A90D9',
+      };
+    });
+  } catch(ex) { console.error('[Supabase] loadFriendRequestsFromSupabase 异常:', ex.message); return []; }
+};
+
+const loadSentFriendRequestsFromSupabase = async (userId) => {
+  const sb = getSupabase(); if (!sb || !userId) return [];
+  try {
+    const resp = await sb.from('friend_requests').select('to_user_id').eq('from_user_id', userId).eq('status', 'pending');
+    if (resp.error || !resp.data || !resp.data.length) return [];
+    return resp.data.map(r => r.to_user_id);
+  } catch(ex) { console.error('[Supabase] loadSentFriendRequestsFromSupabase 异常:', ex.message); return []; }
+};
+
+const subscribeToFriendRequests = (userId, onNewRequest) => {
+  const sb = getSupabase(); if (!sb || !userId) return null;
+  try {
+    const channel = sb.channel('friend-req-' + userId)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'friend_requests', filter: 'to_user_id=eq.' + userId },
+        payload => {
+          if (onNewRequest && payload.new && payload.new.status === 'pending') {
+            const fromUserId = payload.new.from_user_id;
+            sb.from('nearby_users').select('id,name,avatar,color').eq('id', fromUserId).single()
+              .then(r => {
+                const meta = (!r.error && r.data) ? r.data : null;
+                onNewRequest({
+                  id: payload.new.id, fromUserId, toUserId: payload.new.to_user_id,
+                  status: payload.new.status, createdAt: payload.new.created_at,
+                  fromUserName: meta ? meta.name : ('邻居' + fromUserId.slice(-4)),
+                  fromUserAvatar: meta ? (meta.avatar || '👤') : '👤',
+                  fromUserColor: meta ? (meta.color || '#4A90D9') : '#4A90D9',
+                });
+              });
+          }
+        }
+      ).subscribe(status => {
+        if (status === 'SUBSCRIBED') console.log('[Supabase] 好友申请实时订阅成功 (' + userId + ')');
+      });
+    return channel;
+  } catch(ex) { console.error('[Supabase] subscribeToFriendRequests 异常:', ex.message); return null; }
+};
+
 // ===== Supabase 实时订阅 =====
 
 const subscribeToCommunityPosts = (onNewPost, onPostUpdate, onPostDelete) => {
@@ -866,6 +962,12 @@ function useAppState() {
     return saved ? JSON.parse(saved) : [];
   });
 
+  // 待处理的好友申请（别人发给我的）
+  const [friendRequests, setFriendRequests] = useState([]);
+
+  // 我发出的待处理申请 ID 集合
+  const [sentRequestIds, setSentRequestIds] = useState(new Set());
+
   // 聊天消息 { friendId: [{ id, from, text, time }] }
   const [messages, setMessages] = useState(() => {
     const saved = localStorage.getItem('nlqw_messages');
@@ -1061,19 +1163,36 @@ function useAppState() {
 
 
 
-  // 好友管理
-  const addFriend = useCallback((userId, userData) => {
-    // 优先使用传入的用户数据，否则从 nearbyUsers 中查找
+
+
+  // 好友管理（申请制）
+  const sendFriendRequest = useCallback((userId, userData) => {
     var user = userData || nearbyUsers.find(function(u) { return u.id === userId; });
-    if (!user) {
-      console.warn('[addFriend] 未找到用户:', userId);
-      return;
-    }
-    setFriends(prev => {
-      if (prev.find(f => f.id === userId)) return prev;
-      return [...prev, { id: user.id, name: user.name, avatar: user.avatar, color: user.color }];
+    if (!user) { console.warn('[sendFriendRequest] 未找到用户:', userId); return; }
+    sendFriendRequestToSupabase(currentUser.id, userId).then(function(ok) {
+      if (ok) console.log('[Supabase] 好友申请已发送:', userId);
     });
-  }, [nearbyUsers]);
+    setSentRequestIds(function(prev) { var n = new Set(prev); n.add(userId); return n; });
+  }, [nearbyUsers, currentUser.id]);
+
+  const acceptFriendRequest = useCallback((fromUserId, requestData) => {
+    var userMeta = requestData || {};
+    acceptFriendRequestToSupabase(fromUserId, currentUser.id).then(function(ok) {
+      if (!ok) return;
+      setFriends(function(prev) {
+        if (prev.find(function(f) { return f.id === fromUserId; })) return prev;
+        return [...prev, { id: fromUserId, name: userMeta.fromUserName || ('邻居' + fromUserId.slice(-4)), avatar: userMeta.fromUserAvatar || '👤', color: userMeta.fromUserColor || '#4A90D9' }];
+      });
+      setFriendRequests(function(prev) { return prev.filter(function(r) { return r.fromUserId !== fromUserId; }); });
+    });
+  }, [currentUser.id]);
+
+  const rejectFriendRequest = useCallback((fromUserId) => {
+    rejectFriendRequestToSupabase(fromUserId, currentUser.id).then(function(ok) {
+      if (ok) console.log('[Supabase] 已拒绝好友申请:', fromUserId);
+    });
+    setFriendRequests(function(prev) { return prev.filter(function(r) { return r.fromUserId !== fromUserId; }); });
+  }, [currentUser.id]);
 
   const removeFriend = useCallback((friendId) => {
     setFriends(prev => prev.filter(f => f.id !== friendId));
@@ -1194,6 +1313,33 @@ function useAppState() {
     }).catch(e => console.warn('[Supabase] 社区数据加载异常:', e && e.message));
   }, [currentUser.id]);
 
+  // ===== 应用启动时从 Supabase 加载好友申请 =====
+  useEffect(() => {
+    const uid = currentUser.id;
+    if (!uid) return;
+    loadFriendRequestsFromSupabase(uid).then(data => {
+      if (data && data.length > 0) setFriendRequests(data);
+    }).catch(e => console.warn('[Supabase] 好友申请加载异常:', e && e.message));
+    loadSentFriendRequestsFromSupabase(uid).then(ids => {
+      if (ids && ids.length > 0) setSentRequestIds(new Set(ids));
+    }).catch(e => console.warn('[Supabase] 已发送申请加载异常:', e && e.message));
+  }, [currentUser.id]);
+
+  // ===== 实时订阅：好友申请 =====
+  useEffect(() => {
+    const sb = getSupabase();
+    if (!sb) return;
+    const uid = currentUser.id;
+    if (!uid) return;
+    const channel = subscribeToFriendRequests(uid, request => {
+      setFriendRequests(prev => {
+        if (prev.find(r => r.fromUserId === request.fromUserId)) return prev;
+        return [...prev, request];
+      });
+    });
+    return () => { if (channel) { try { channel.unsubscribe(); } catch(e) {} } };
+  }, [currentUser.id]);
+
   // ===== 实时订阅：社区帖子 =====
   useEffect(() => {
     const sb = getSupabase();
@@ -1259,7 +1405,7 @@ function useAppState() {
     favorites, toggleFavorite, isFavorite,
     postComments, addPostComment, deletePostComment,
     currentUser,
-    friends, addFriend, removeFriend, getFriends,
+    friends, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, getFriends, removedFriendIds: new Set(), friendRequests, sentRequestIds,
     messages, sendMessage, getChatMessages,
     nearbyUsers, refreshNearbyUsers,
     userLocation, setUserLocation,
@@ -3129,15 +3275,15 @@ function ReviewSection({ placeId, reviews, addReview, updateReview, currentUser 
 // 好友列表页面（基于真实定位的附近的人）
 // ============================================================
 function FriendListPage({ onChatOpen }) {
-  const { friends, removeFriend, addFriend, messages, nearbyUsers, refreshNearbyUsers, userLocation, setUserLocation, selectedCity, selectCity } = useApp();
-  const [activeTab, setActiveTab] = useState('myFriends'); // myFriends | discover
+  const { friends, removeFriend, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, messages, nearbyUsers, refreshNearbyUsers, userLocation, setUserLocation, selectedCity, selectCity, currentUser, friendRequests, sentRequestIds, removedFriendIds } = useApp();
+  const [activeTab, setActiveTab] = useState('myFriends'); // myFriends | discover | requests
   const [searchText, setSearchText] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [requestSentDialog, setRequestSentDialog] = useState(null);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState('');
   const [showCityPicker, setShowCityPicker] = useState(false);
   const [citySearchText, setCitySearchText] = useState('');
-  const [justAdded, setJustAdded] = useState({}); // 记录刚添加的好友 ID
 
   // 获取定位
   const handleLocate = useCallback(() => {
@@ -3182,16 +3328,20 @@ function FriendListPage({ onChatOpen }) {
     return msgs.filter(m => m.from === friendId).length;
   };
 
-  // 发现附近的人 - 排除已是好友的，按距离排序
+  // 发现附近的人 - 排除自己、好友、已申请的用户
   const discoverUsers = useMemo(() => {
     if (!userLocation) return [];
     const friendIds = new Set(friends.map(f => f.id));
-    const filtered = nearbyUsers.filter(u => !friendIds.has(u.id) &&
+    const requestIds = new Set(friendRequests.map(r => r.fromUserId));
+    const filtered = nearbyUsers.filter(u =>
+      u.id !== currentUser.id &&
+      !friendIds.has(u.id) &&
+      !requestIds.has(u.id) &&
+      !sentRequestIds.has(u.id) &&
       (searchText === '' || u.name.includes(searchText) || u.intro.includes(searchText))
     );
-    // 有定位时按距离排序，无定位保持原序
     return filtered.sort((a, b) => (a.distance || 999) - (b.distance || 999));
-  }, [friends, searchText, nearbyUsers, userLocation]);
+  }, [friends, searchText, nearbyUsers, userLocation, currentUser.id, friendRequests, sentRequestIds]);
 
   // 搜索好友
   const searchFriends = useMemo(() => {
@@ -3242,20 +3392,30 @@ function FriendListPage({ onChatOpen }) {
       </div>
 
       {/* 标签切换 */}
-      <div className="flex gap-8 mb-12">
+      <div className="flex gap-8 mb-12" style={{ flexWrap: 'wrap' }}>
         <button
           className={`btn btn-sm ${activeTab === 'myFriends' ? 'btn-primary' : 'btn-secondary'}`}
-          style={{ flex: 1, borderRadius: 10 }}
+          style={{ flex: 1, minWidth: 80, borderRadius: 10 }}
           onClick={() => setActiveTab('myFriends')}
         >
-          <i className="fa-solid fa-user-group"></i> 我的好友 ({friends.length})
+          <i className="fa-solid fa-user-group"></i> 好友 ({friends.length})
+        </button>
+        <button
+          className={`btn btn-sm ${activeTab === 'requests' ? 'btn-primary' : 'btn-secondary'}`}
+          style={{ flex: 1, minWidth: 80, borderRadius: 10, position: 'relative' }}
+          onClick={() => setActiveTab('requests')}
+        >
+          <i className="fa-solid fa-bell"></i> 申请
+          {friendRequests.length > 0 && (
+            <span style={{ position: 'absolute', top: -4, right: -4, background: '#E53E3E', color: '#fff', fontSize: 10, minWidth: 18, height: 18, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>{friendRequests.length}</span>
+          )}
         </button>
         <button
           className={`btn btn-sm ${activeTab === 'discover' ? 'btn-primary' : 'btn-secondary'}`}
-          style={{ flex: 1, borderRadius: 10 }}
+          style={{ flex: 1, minWidth: 80, borderRadius: 10 }}
           onClick={() => setActiveTab('discover')}
         >
-          <i className="fa-solid fa-user-plus"></i> 附近的人 {nearbyCount > 0 && `(${nearbyCount})`}
+          <i className="fa-solid fa-user-plus"></i> 发现 {nearbyCount > 0 && `(${nearbyCount})`}
         </button>
       </div>
 
@@ -3289,6 +3449,42 @@ function FriendListPage({ onChatOpen }) {
                 </div>
               );
             })
+          )}
+        </div>
+      )}
+
+      {/* 好友申请 Tab */}
+      {activeTab === 'requests' && (
+        <div className="friend-list">
+          {friendRequests.length === 0 ? (
+            <div className="empty-state">
+              <i className="fa-solid fa-bell"></i>
+              <p>暂无新的好友申请</p>
+            </div>
+          ) : (
+            friendRequests.map(request => (
+              <div key={request.fromUserId} className="friend-card card" style={{ borderLeft: '3px solid var(--primary-color)' }}>
+                <div className="friend-avatar" style={{ background: request.fromUserColor || 'var(--gradient-1)' }}>
+                  {request.fromUserAvatar}
+                </div>
+                <div className="friend-info">
+                  <div className="friend-name">{request.fromUserName}</div>
+                  <div className="friend-preview text-muted text-sm" style={{ color: 'var(--primary-color)' }}>
+                    <i className="fa-solid fa-user-plus"></i> 请求添加你为好友
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button className="btn btn-sm" style={{ background: 'var(--success)', color: '#fff', borderRadius: 8, border: 'none', padding: '6px 12px', fontSize: 12, fontWeight: 600 }}
+                    onClick={e => { e.stopPropagation(); acceptFriendRequest(request.fromUserId, request); }}>
+                    <i className="fa-solid fa-check"></i> 同意
+                  </button>
+                  <button className="btn btn-sm" style={{ background: 'transparent', color: '#999', borderRadius: 8, border: '1px solid var(--border-color)', padding: '6px 12px', fontSize: 12 }}
+                    onClick={e => { e.stopPropagation(); rejectFriendRequest(request.fromUserId); }}>
+                    <i className="fa-solid fa-xmark"></i> 拒绝
+                  </button>
+                </div>
+              </div>
+            ))
           )}
         </div>
       )}
@@ -3357,22 +3553,19 @@ function FriendListPage({ onChatOpen }) {
                       {user.intro}
                     </div>
                   </div>
-                  {justAdded[user.id] ? (
-                    <span className="btn btn-sm" style={{ background: 'var(--success)', color: '#fff', borderRadius: 8, fontSize: 12, padding: '4px 12px' }}>
-                      <i className="fa-solid fa-check"></i> 已添加
+                  {sentRequestIds.has(user.id) ? (
+                    <span className="btn btn-sm" style={{ background: 'var(--success)', color: '#fff', borderRadius: 8, fontSize: 12, padding: '4px 12px', cursor: 'default' }}>
+                      <i className="fa-solid fa-paper-plane"></i> 已申请
                     </span>
                   ) : (
                     <button
                       className="btn btn-sm btn-primary"
                       onClick={() => {
-                        addFriend(user.id, user);
-                        setJustAdded(function(prev) { var n = {...prev}; n[user.id] = true; return n; });
-                        setTimeout(function() {
-                          setJustAdded(function(prev) { var n = {...prev}; delete n[user.id]; return n; });
-                        }, 2000);
+                        sendFriendRequest(user.id, user);
+                        setRequestSentDialog({ name: user.name, avatar: user.avatar, color: user.color });
                       }}
                     >
-                      <i className="fa-solid fa-plus"></i> 添加
+                      <i className="fa-solid fa-user-plus"></i> 添加好友
                     </button>
                   )}
                 </div>
@@ -3408,6 +3601,33 @@ function FriendListPage({ onChatOpen }) {
               <button className="btn btn-secondary btn-block" onClick={() => setDeleteConfirm(null)}>取消</button>
               <button className="btn btn-danger btn-block" onClick={handleDeleteFriend}>确认删除</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 申请已发送弹窗 */}
+      {requestSentDialog && (
+        <div className="modal-overlay" onClick={() => setRequestSentDialog(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ textAlign: 'center', padding: '32px 24px' }}>
+            <div style={{
+              width: 64, height: 64, borderRadius: '50%',
+              background: requestSentDialog.color || 'var(--gradient-1)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 16px', fontSize: 32,
+            }}>
+              {requestSentDialog.avatar}
+            </div>
+            <h3 style={{ marginBottom: 8, fontSize: 18 }}>申请已发送</h3>
+            <p style={{ color: 'var(--text-muted)', marginBottom: 20, fontSize: 14 }}>
+              已向 <strong>{requestSentDialog.name}</strong> 发送好友申请，<br/>等待对方同意后即可成为好友
+            </p>
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', borderRadius: 10, padding: '12px' }}
+              onClick={() => setRequestSentDialog(null)}
+            >
+              <i className="fa-solid fa-check"></i> 好的
+            </button>
           </div>
         </div>
       )}

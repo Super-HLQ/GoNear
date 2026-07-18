@@ -220,6 +220,18 @@
       } catch(ex) { console.error('[Supabase] loadFriendRequestsFromSupabase 异常:', ex.message); return []; }
     }
 
+    // 加载我发出的待处理申请（用于在发现页标记"已申请"）
+    async function loadSentFriendRequestsFromSupabase(userId) {
+      var sb = getSupabase();
+      if (!sb || !userId) return [];
+      try {
+        var resp = await sb.from('friend_requests').select('to_user_id').eq('from_user_id', userId).eq('status', 'pending');
+        if (resp.error) { console.error('[Supabase] 加载已发申请失败:', resp.error.message); return []; }
+        if (!resp.data || resp.data.length === 0) return [];
+        return resp.data.map(function(r) { return r.to_user_id; });
+      } catch(ex) { console.error('[Supabase] loadSentFriendRequestsFromSupabase 异常:', ex.message); return []; }
+    }
+
     async function removeFriendFromSupabase(userId, friendId) {
       var sb = getSupabase();
       if (!sb || !userId || !friendId) return false;
@@ -1761,6 +1773,9 @@ function useAppState() {
   // 待处理的好友申请（别人发给我的）
   const [friendRequests, setFriendRequests] = useState([]);
 
+  // 我发出的待处理申请 ID 集合（用于在发现页标记"已申请"）
+  const [sentRequestIds, setSentRequestIds] = useState(new Set());
+
   // 当 nearbyUsers 刷新时，同步更新好友列表中对应好友的头像/名称/颜色
   useEffect(function() {
     if (!nearbyUsers.length || !friends.length) return;
@@ -1867,6 +1882,15 @@ function useAppState() {
       }
     }).catch(function(e) {
       console.warn('[Supabase] 好友申请加载异常:', e && e.message);
+    });
+    // 加载我发出的待处理申请
+    loadSentFriendRequestsFromSupabase(uid).then(function(ids) {
+      if (ids && ids.length > 0) {
+        console.log('[Supabase] 已发送申请加载完成:', ids.length, '条');
+        setSentRequestIds(new Set(ids));
+      }
+    }).catch(function(e) {
+      console.warn('[Supabase] 已发送申请加载异常:', e && e.message);
     });
   }, [currentUser.id, supabaseDataLoaded]);
 
@@ -2579,6 +2603,12 @@ function useAppState() {
     sendFriendRequestToSupabase(currentUser.id, userId).then(function(ok) {
       if (ok) console.log('[Supabase] 好友申请已发送:', userId);
     });
+    // 标记为已发送
+    setSentRequestIds(function(prev) {
+      var n = new Set(prev);
+      n.add(userId);
+      return n;
+    });
   }, [nearbyUsers, currentUser.id]);
 
   const acceptFriendRequest = useCallback((fromUserId, requestData) => {
@@ -2756,7 +2786,7 @@ function useAppState() {
     currentUser, updateCurrentUser,
     userLocation, setUserLocation,
     nearbyPois, searchNearby, searchingNearby, nearbySearchError,
-    friends, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, getFriends, removedFriendIds, friendRequests,
+    friends, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, getFriends, removedFriendIds, friendRequests, sentRequestIds,
     messages, sendMessage, getChatMessages,
     unreadCounts, resetUnreadCount,
     nearbyUsers, refreshNearbyUsers,
@@ -5390,10 +5420,11 @@ function ReviewSection({ placeId, reviews, addReview, updateReview, currentUser 
 
 // ==================== 组件：好友列表（基于真实定位的附近的人）====================
 function FriendListPage({ onChatOpen }) {
-  const { friends, removeFriend, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, messages, unreadCounts, nearbyUsers, refreshNearbyUsers, userLocation, setUserLocation, selectedCity, selectCity, supabaseReady, currentUser, removedFriendIds, friendRequests } = useApp();
+  const { friends, removeFriend, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, messages, unreadCounts, nearbyUsers, refreshNearbyUsers, userLocation, setUserLocation, selectedCity, selectCity, supabaseReady, currentUser, removedFriendIds, friendRequests, sentRequestIds } = useApp();
   const [activeTab, setActiveTab] = useState('myFriends');
   const [searchText, setSearchText] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [requestSentDialog, setRequestSentDialog] = useState(null); // 申请已发送弹窗 { name, avatar, color }
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState('');
   const [showSupabaseSetup, setShowSupabaseSetup] = useState(false);
@@ -5402,7 +5433,6 @@ function FriendListPage({ onChatOpen }) {
   const [supabaseSaving, setSupabaseSaving] = useState(false);
   const [supabaseMsg, setSupabaseMsg] = useState('');
   const [searching, setSearching] = useState(false);
-  const [justAdded, setJustAdded] = useState({}); // 记录刚添加的好友 ID，用于显示"已添加"反馈
 
   const handleSaveSupabase = () => {
     if (!supabaseUrl || !supabaseKey) {
@@ -5483,6 +5513,7 @@ function FriendListPage({ onChatOpen }) {
       u.id !== currentUser.id &&   // 排除自己
       !friendIds.has(u.id) &&      // 排除当前好友
       !requestIds.has(u.id) &&     // 排除已有待处理申请的用户
+      !sentRequestIds.has(u.id) && // 排除已经发送申请的用户
       u.online &&                  // 只显示在线用户
       (searchText === '' || u.name.includes(searchText) || u.intro.includes(searchText))
     ).map(u => {
@@ -5493,7 +5524,7 @@ function FriendListPage({ onChatOpen }) {
       return u;
     });
     return filtered.sort((a, b) => (a.distance || 999) - (b.distance || 999));
-  }, [friends, searchText, nearbyUsers, userLocation, currentUser.id, removedFriendIds, friendRequests]);
+  }, [friends, searchText, nearbyUsers, userLocation, currentUser.id, removedFriendIds, friendRequests, sentRequestIds]);
 
   const searchFriends = useMemo(() => {
     if (!searchText) return friends;
@@ -5839,8 +5870,8 @@ CREATE POLICY "public_all" ON nearby_users
                       </div>
                     )}
                   </div>
-                  {justAdded[user.id] ? (
-                    <span className="btn btn-sm" style={{ background: 'var(--success)', color: '#fff', borderRadius: 8, fontSize: 12, padding: '4px 12px' }}>
+                  {sentRequestIds.has(user.id) ? (
+                    <span className="btn btn-sm" style={{ background: 'var(--success)', color: '#fff', borderRadius: 8, fontSize: 12, padding: '4px 12px', cursor: 'default' }}>
                       <i className="fa-solid fa-paper-plane"></i> 已申请
                     </span>
                   ) : (
@@ -5848,10 +5879,7 @@ CREATE POLICY "public_all" ON nearby_users
                       className="btn btn-sm btn-primary"
                       onClick={() => {
                         sendFriendRequest(user.id, user);
-                        setJustAdded(function(prev) { var n = {...prev}; n[user.id] = true; return n; });
-                        setTimeout(function() {
-                          setJustAdded(function(prev) { var n = {...prev}; delete n[user.id]; return n; });
-                        }, 2000);
+                        setRequestSentDialog({ name: user.name, avatar: user.avatar, color: user.color });
                       }}
                     >
                       <i className="fa-solid fa-user-plus"></i> 添加好友
@@ -5888,6 +5916,32 @@ CREATE POLICY "public_all" ON nearby_users
               <button className="btn btn-secondary btn-block" onClick={() => setDeleteConfirm(null)}>取消</button>
               <button className="btn btn-danger btn-block" onClick={handleDeleteFriend}>确认删除</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {requestSentDialog && (
+        <div className="modal-overlay" onClick={() => setRequestSentDialog(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ textAlign: 'center', padding: '32px 24px' }}>
+            <div style={{
+              width: 64, height: 64, borderRadius: '50%',
+              background: requestSentDialog.color || 'var(--gradient-1)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 16px', fontSize: 32,
+            }}>
+              {requestSentDialog.avatar}
+            </div>
+            <h3 style={{ marginBottom: 8, fontSize: 18 }}>申请已发送</h3>
+            <p style={{ color: 'var(--text-muted)', marginBottom: 20, fontSize: 14 }}>
+              已向 <strong>{requestSentDialog.name}</strong> 发送好友申请，<br/>等待对方同意后即可成为好友
+            </p>
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', borderRadius: 10, padding: '12px' }}
+              onClick={() => setRequestSentDialog(null)}
+            >
+              <i className="fa-solid fa-check"></i> 好的
+            </button>
           </div>
         </div>
       )}
