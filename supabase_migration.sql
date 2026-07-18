@@ -131,6 +131,10 @@ ALTER PUBLICATION supabase_realtime ADD TABLE post_comments;
 ALTER PUBLICATION supabase_realtime ADD TABLE post_likes;
 ALTER PUBLICATION supabase_realtime ADD TABLE favorites;
 
+-- 8.5. 启用 REPLICA IDENTITY FULL 以支持 DELETE 事件的实时推送中获取完整行数据
+ALTER TABLE post_likes REPLICA IDENTITY FULL;
+ALTER TABLE favorites REPLICA IDENTITY FULL;
+
 -- 9. 如果 nearby_users 表已存在但没有 RLS，则补充
 DO $$
 BEGIN
