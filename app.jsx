@@ -264,6 +264,42 @@ const subscribeToCommunityComments = (onNewComment) => {
   } catch(ex) { console.error('[Supabase] subscribeToCommunityComments 异常:', ex.message); return null; }
 };
 
+// 实时订阅：点赞变化
+const subscribeToLikes = (onLikesChange) => {
+  const sb = getSupabase(); if (!sb) return null;
+  try {
+    const channel = sb.channel('community-likes')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'post_likes' }, (payload) => {
+        if (payload.new && onLikesChange) onLikesChange(payload.new.post_id, 1);
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'post_likes' }, (payload) => {
+        if (payload.old && onLikesChange) onLikesChange(payload.old.post_id, -1);
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') console.log('[Supabase] 点赞实时订阅成功');
+      });
+    return channel;
+  } catch(ex) { console.error('[Supabase] subscribeToLikes 异常:', ex.message); return null; }
+};
+
+// 实时订阅：收藏变化
+const subscribeToFavorites = (onFavoriteChange) => {
+  const sb = getSupabase(); if (!sb) return null;
+  try {
+    const channel = sb.channel('community-favorites')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'favorites' }, (payload) => {
+        if (payload.new && onFavoriteChange) onFavoriteChange(payload.new.item_id, payload.new.item_type, payload.new.user_id, true);
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'favorites' }, (payload) => {
+        if (payload.old && onFavoriteChange) onFavoriteChange(payload.old.item_id, payload.old.item_type, payload.old.user_id, false);
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') console.log('[Supabase] 收藏实时订阅成功');
+      });
+    return channel;
+  } catch(ex) { console.error('[Supabase] subscribeToFavorites 异常:', ex.message); return null; }
+};
+
 // 主题管理
 const ThemeContext = createContext(null);
 

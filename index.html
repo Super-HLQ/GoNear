@@ -80,18 +80,26 @@
       return initSupabase();
     }
 
-    // 检测 Supabase 核心表是否已创建（messages 和 friendships）
+    // 检测 Supabase 核心表是否已创建（所有依赖表）
     var _supabaseTablesAvailable = null; // null=未检测, true=可用, false=不可用
     function checkSupabaseTables() {
       var sb = getSupabase();
       if (!sb) { _supabaseTablesAvailable = false; return Promise.resolve(false); }
-      // 并发检测两张表
+      // 并发检测所有相关表
       return Promise.all([
         sb.from('messages').select('id').limit(1).then(function(r) { return !r.error; }).catch(function() { return false; }),
-        sb.from('friendships').select('id').limit(1).then(function(r) { return !r.error; }).catch(function() { return false; })
+        sb.from('friendships').select('id').limit(1).then(function(r) { return !r.error; }).catch(function() { return false; }),
+        sb.from('friend_requests').select('id').limit(1).then(function(r) { return !r.error; }).catch(function() { return false; }),
+        sb.from('posts').select('id').limit(1).then(function(r) { return !r.error; }).catch(function() { return false; }),
+        sb.from('post_comments').select('id').limit(1).then(function(r) { return !r.error; }).catch(function() { return false; }),
+        sb.from('post_likes').select('id').limit(1).then(function(r) { return !r.error; }).catch(function() { return false; }),
+        sb.from('favorites').select('id').limit(1).then(function(r) { return !r.error; }).catch(function() { return false; })
       ]).then(function(results) {
-        _supabaseTablesAvailable = results[0] && results[1];
-        console.log('[Supabase] 表检测: messages=' + results[0] + ', friendships=' + results[1] + ', 可用=' + _supabaseTablesAvailable);
+        _supabaseTablesAvailable = results[0] && results[1] && results[2] && results[3] && results[4] && results[5] && results[6];
+        console.log('[Supabase] 表检测: messages=' + results[0] + ', friendships=' + results[1] + ', fr_req=' + results[2] + ', posts=' + results[3] + ', comments=' + results[4] + ', likes=' + results[5] + ', favs=' + results[6] + ', 全部可用=' + _supabaseTablesAvailable);
+        if (!_supabaseTablesAvailable) {
+          console.warn('[Supabase] ⚠️ 部分表缺失，请在 Supabase SQL Editor 中运行 supabase_migration.sql');
+        }
         return _supabaseTablesAvailable;
       });
     }
@@ -632,6 +640,58 @@
           });
         return channel;
       } catch(ex) { console.error('[Supabase] subscribeToCommunityComments 异常:', ex.message); return null; }
+    }
+
+    // 实时订阅：点赞变化（INSERT=有人点赞, DELETE=有人取消点赞）
+    function subscribeToLikes(onLikesChange) {
+      var sb = getSupabase();
+      if (!sb) return null;
+      try {
+        var channel = sb.channel('community-likes')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'post_likes' }, function(payload) {
+            if (payload.new && onLikesChange) {
+              console.log('[Supabase] 收到新点赞: post=' + payload.new.post_id + ', user=' + payload.new.user_id);
+              onLikesChange(payload.new.post_id, 1);
+            }
+          })
+          .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'post_likes' }, function(payload) {
+            if (payload.old && onLikesChange) {
+              console.log('[Supabase] 收到取消点赞: post=' + payload.old.post_id + ', user=' + payload.old.user_id);
+              onLikesChange(payload.old.post_id, -1);
+            }
+          })
+          .subscribe(function(status) {
+            if (status === 'SUBSCRIBED') console.log('[Supabase] 点赞实时订阅成功');
+            else if (status === 'CHANNEL_ERROR') console.error('[Supabase] 点赞实时订阅错误');
+          });
+        return channel;
+      } catch(ex) { console.error('[Supabase] subscribeToLikes 异常:', ex.message); return null; }
+    }
+
+    // 实时订阅：收藏变化（INSERT=有人收藏, DELETE=有人取消收藏）
+    function subscribeToFavorites(onFavoriteChange) {
+      var sb = getSupabase();
+      if (!sb) return null;
+      try {
+        var channel = sb.channel('community-favorites')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'favorites' }, function(payload) {
+            if (payload.new && onFavoriteChange) {
+              console.log('[Supabase] 收到新收藏: ' + payload.new.item_id);
+              onFavoriteChange(payload.new.item_id, payload.new.item_type, payload.new.user_id, true);
+            }
+          })
+          .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'favorites' }, function(payload) {
+            if (payload.old && onFavoriteChange) {
+              console.log('[Supabase] 收到取消收藏: ' + payload.old.item_id);
+              onFavoriteChange(payload.old.item_id, payload.old.item_type, payload.old.user_id, false);
+            }
+          })
+          .subscribe(function(status) {
+            if (status === 'SUBSCRIBED') console.log('[Supabase] 收藏实时订阅成功');
+            else if (status === 'CHANNEL_ERROR') console.error('[Supabase] 收藏实时订阅错误');
+          });
+        return channel;
+      } catch(ex) { console.error('[Supabase] subscribeToFavorites 异常:', ex.message); return null; }
     }
 
     // 检查依赖是否加载成功
@@ -2087,6 +2147,35 @@ function useAppState() {
       if (channel) {
         try { channel.unsubscribe(); } catch(e) {}
         console.log('[Supabase] 社区评论订阅已取消');
+      }
+    };
+  }, [currentUser.id, supabaseReady]);
+
+  // ===== 全局 Supabase 实时订阅：点赞 =====
+  useEffect(() => {
+    if (!supabaseReady || !getSupabase() || !isSupabaseTablesReady()) return;
+    if (!currentUser.id) return;
+    console.log('[Supabase] 启动点赞实时订阅');
+    var channel = subscribeToLikes(function(postId, delta) {
+      // 更新帖子的点赞数
+      setPosts(function(prev) {
+        return prev.map(function(p) {
+          if (p.id !== postId) return p;
+          return { ...p, likes: Math.max(0, (p.likes || 0) + delta) };
+        });
+      });
+      // 同步更新热门活动中的点赞数（playDates 存储为 posts 格式）
+      setPlayDates(function(prev) {
+        return prev.map(function(pd) {
+          if (pd.id !== postId) return pd;
+          return { ...pd, likes: Math.max(0, (pd.likes || 0) + delta) };
+        });
+      });
+    });
+    return function() {
+      if (channel) {
+        try { channel.unsubscribe(); } catch(e) {}
+        console.log('[Supabase] 点赞实时订阅已取消');
       }
     };
   }, [currentUser.id, supabaseReady]);
