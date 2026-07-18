@@ -1,6 +1,6 @@
 // 邻里趣玩 - 发现附近好去处，和邻居一起玩
 
-const { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment } = React;
+var useState = React.useState, useEffect = React.useEffect, useCallback = React.useCallback, useMemo = React.useMemo, useRef = React.useRef, createContext = React.createContext, useContext = React.useContext, Fragment = React.Fragment;
 
 // 工具函数
 
