@@ -1737,6 +1737,9 @@ function useAppState() {
   // Supabase 数据就绪标记
   const [supabaseDataLoaded, setSupabaseDataLoaded] = useState(false);
 
+  // Supabase 是否已就绪（表检测完成后才为 true，用于控制所有 Supabase 操作）
+  const [supabaseReady, setSupabaseReady] = useState(() => false);
+
   // 应用启动时从 Supabase 加载好友列表
   useEffect(() => {
     if (supabaseDataLoaded) return;
@@ -1828,9 +1831,6 @@ function useAppState() {
       console.warn('[Supabase] 社区数据加载异常:', e && e.message);
     });
   }, [currentUser.id, supabaseReady]);
-
-  // Supabase 是否已配置（在 JSX 中同步读取，配合 forceUpdate）
-  const [supabaseReady, setSupabaseReady] = useState(() => false);
 
   // ===== 全局 Supabase 实时订阅 + 轮询兜底：消息 =====
   useEffect(function() {
