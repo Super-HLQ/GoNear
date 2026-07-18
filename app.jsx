@@ -45,6 +45,225 @@ const formatDate = (d) => {
 /** 获取当前小时 */
 const currentHour = () => new Date().getHours();
 
+// ===== Supabase 配置 =====
+let sbClient = null;
+let _supabaseTablesAvailable = null;
+
+const getSupabaseConfig = () => {
+  try {
+    const saved = localStorage.getItem('nlqw_supabase_config');
+    return saved ? JSON.parse(saved) : {};
+  } catch(e) { return {}; }
+};
+
+const SUPABASE_URL = () => getSupabaseConfig().url || 'https://uvkdabhmqwquoksiydew.supabase.co';
+const SUPABASE_ANON_KEY = () => getSupabaseConfig().anonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV2a2RhYmhtcXdxdW9rc2l5ZGV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxODQwMjAsImV4cCI6MjA5OTc2MDAyMH0.TpcSlRkmus-_sbFlGqkjl2TtLi1zR82bUC7WCo0jTFE';
+
+const initSupabase = () => {
+  if (sbClient) return sbClient;
+  const url = SUPABASE_URL();
+  const key = SUPABASE_ANON_KEY();
+  if (!url || !key) { console.warn('[Supabase] 缺少配置'); return null; }
+  const sb = window.supabase;
+  if (!sb || typeof sb.createClient !== 'function') { console.warn('[Supabase] SDK 未加载'); return null; }
+  try {
+    sbClient = sb.createClient(url, key);
+    console.log('[Supabase] 已连接');
+    return sbClient;
+  } catch(e) { console.warn('[Supabase] 连接失败:', e.message); return null; }
+};
+
+const getSupabase = () => sbClient || initSupabase();
+
+const isSupabaseTablesReady = () => _supabaseTablesAvailable === true;
+
+// ===== Supabase 社区 CRUD 函数 =====
+
+const loadPostsFromSupabase = async () => {
+  const sb = getSupabase(); if (!sb) return null;
+  try {
+    const resp = await sb.from('posts').select('*').order('created_at', { ascending: false }).limit(100);
+    if (resp.error) { console.error('[Supabase] 加载帖子失败:', resp.error.message); return null; }
+    if (!resp.data || resp.data.length === 0) return [];
+    return resp.data.map(p => ({
+      id: p.id, userId: p.user_id, userName: p.user_name,
+      title: p.title, content: p.content || '', imageGrad: p.image_grad || 'grad-1',
+      likes: p.likes || 0, comments: p.comments_count || 0,
+      collected: p.collected || false, time: p.time || '刚刚',
+      tags: Array.isArray(p.tags) ? p.tags : (typeof p.tags === 'string' ? JSON.parse(p.tags) : []),
+      createdAt: p.created_at
+    }));
+  } catch(ex) { console.error('[Supabase] loadPostsFromSupabase 异常:', ex.message); return null; }
+};
+
+const savePostToSupabase = async (post) => {
+  const sb = getSupabase(); if (!sb) return false;
+  try {
+    const resp = await sb.from('posts').insert({
+      id: post.id, user_id: post.userId, user_name: post.userName,
+      title: post.title, content: post.content || '', image_grad: post.imageGrad || 'grad-1',
+      likes: post.likes || 0, comments_count: post.comments || 0,
+      collected: post.collected || false, time: post.time || '刚刚',
+      tags: post.tags || [], created_at: new Date().toISOString()
+    });
+    if (resp.error) { console.error('[Supabase] 保存帖子失败:', resp.error.message); return false; }
+    console.log('[Supabase] ✅ 帖子已保存:', post.id);
+    return true;
+  } catch(ex) { console.error('[Supabase] savePostToSupabase 异常:', ex.message); return false; }
+};
+
+const updatePostToSupabase = async (postId, updates) => {
+  const sb = getSupabase(); if (!sb) return false;
+  try {
+    const data = {};
+    if (updates.likes !== undefined) data.likes = updates.likes;
+    if (updates.comments !== undefined) data.comments_count = updates.comments;
+    if (updates.collected !== undefined) data.collected = updates.collected;
+    if (Object.keys(data).length === 0) return true;
+    const resp = await sb.from('posts').update(data).eq('id', postId);
+    if (resp.error) { console.error('[Supabase] 更新帖子失败:', resp.error.message); return false; }
+    return true;
+  } catch(ex) { console.error('[Supabase] updatePostToSupabase 异常:', ex.message); return false; }
+};
+
+const loadPostCommentsFromSupabase = async () => {
+  const sb = getSupabase(); if (!sb) return null;
+  try {
+    const resp = await sb.from('post_comments').select('*').order('created_at', { ascending: true }).limit(500);
+    if (resp.error) { console.error('[Supabase] 加载评论失败:', resp.error.message); return null; }
+    if (!resp.data || resp.data.length === 0) return {};
+    const comments = {};
+    resp.data.forEach(c => {
+      if (!comments[c.post_id]) comments[c.post_id] = [];
+      comments[c.post_id].push({
+        id: c.comment_id, userId: c.user_id, userName: c.user_name,
+        text: c.text, time: c.time || '刚刚', postId: c.post_id, postTitle: c.post_title || ''
+      });
+    });
+    return comments;
+  } catch(ex) { console.error('[Supabase] loadPostCommentsFromSupabase 异常:', ex.message); return null; }
+};
+
+const saveCommentToSupabase = async (comment) => {
+  const sb = getSupabase(); if (!sb) return false;
+  try {
+    const resp = await sb.from('post_comments').insert({
+      comment_id: comment.id, post_id: comment.postId, user_id: comment.userId,
+      user_name: comment.userName, text: comment.text, time: comment.time || '刚刚',
+      post_title: comment.postTitle || '', created_at: new Date().toISOString()
+    });
+    if (resp.error) { console.error('[Supabase] 保存评论失败:', resp.error.message); return false; }
+    console.log('[Supabase] ✅ 评论已保存:', comment.id);
+    return true;
+  } catch(ex) { console.error('[Supabase] saveCommentToSupabase 异常:', ex.message); return false; }
+};
+
+const loadLikesFromSupabase = async (userId) => {
+  const sb = getSupabase(); if (!sb || !userId) return null;
+  try {
+    const resp = await sb.from('post_likes').select('post_id').eq('user_id', userId);
+    if (resp.error) { console.error('[Supabase] 加载点赞失败:', resp.error.message); return null; }
+    return (resp.data || []).map(l => l.post_id);
+  } catch(ex) { console.error('[Supabase] loadLikesFromSupabase 异常:', ex.message); return null; }
+};
+
+const likePostToSupabase = async (postId, userId) => {
+  const sb = getSupabase(); if (!sb || !postId || !userId) return false;
+  try {
+    const resp = await sb.from('post_likes').insert({ post_id: postId, user_id: userId });
+    if (resp.error) { console.error('[Supabase] 点赞失败:', resp.error.message); return false; }
+    return true;
+  } catch(ex) { console.error('[Supabase] likePostToSupabase 异常:', ex.message); return false; }
+};
+
+const unlikePostToSupabase = async (postId, userId) => {
+  const sb = getSupabase(); if (!sb || !postId || !userId) return false;
+  try {
+    const resp = await sb.from('post_likes').delete().eq('post_id', postId).eq('user_id', userId);
+    if (resp.error) { console.error('[Supabase] 取消点赞失败:', resp.error.message); return false; }
+    return true;
+  } catch(ex) { console.error('[Supabase] unlikePostToSupabase 异常:', ex.message); return false; }
+};
+
+const loadFavoritesFromSupabase = async (userId) => {
+  const sb = getSupabase(); if (!sb || !userId) return null;
+  try {
+    const resp = await sb.from('favorites').select('item_id,item_type').eq('user_id', userId);
+    if (resp.error) { console.error('[Supabase] 加载收藏失败:', resp.error.message); return null; }
+    return (resp.data || []).map(f => f.item_type + '_' + f.item_id);
+  } catch(ex) { console.error('[Supabase] loadFavoritesFromSupabase 异常:', ex.message); return null; }
+};
+
+const addFavoriteToSupabase = async (userId, itemId, itemType) => {
+  const sb = getSupabase(); if (!sb || !userId) return false;
+  try {
+    const resp = await sb.from('favorites').insert({ user_id: userId, item_id: itemId, item_type: itemType || 'post' });
+    if (resp.error) { console.error('[Supabase] 添加收藏失败:', resp.error.message); return false; }
+    return true;
+  } catch(ex) { console.error('[Supabase] addFavoriteToSupabase 异常:', ex.message); return false; }
+};
+
+const removeFavoriteFromSupabase = async (userId, itemId, itemType) => {
+  const sb = getSupabase(); if (!sb || !userId) return false;
+  try {
+    const resp = await sb.from('favorites').delete().eq('user_id', userId).eq('item_id', itemId).eq('item_type', itemType || 'post');
+    if (resp.error) { console.error('[Supabase] 取消收藏失败:', resp.error.message); return false; }
+    return true;
+  } catch(ex) { console.error('[Supabase] removeFavoriteFromSupabase 异常:', ex.message); return false; }
+};
+
+// ===== Supabase 实时订阅 =====
+
+const subscribeToCommunityPosts = (onNewPost, onPostUpdate) => {
+  const sb = getSupabase(); if (!sb) return null;
+  try {
+    const channel = sb.channel('community-posts')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, payload => {
+        if (payload.new && onNewPost) {
+          const p = payload.new;
+          onNewPost({
+            id: p.id, userId: p.user_id, userName: p.user_name,
+            title: p.title, content: p.content || '', imageGrad: p.image_grad || 'grad-1',
+            likes: p.likes || 0, comments: p.comments_count || 0,
+            collected: p.collected || false, time: p.time || '刚刚',
+            tags: Array.isArray(p.tags) ? p.tags : (typeof p.tags === 'string' ? JSON.parse(p.tags) : [])
+          });
+        }
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'posts' }, payload => {
+        if (payload.new && onPostUpdate) {
+          onPostUpdate(payload.new.id, { likes: payload.new.likes, comments: payload.new.comments_count });
+        }
+      })
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') console.log('[Supabase] 社区帖子订阅成功');
+        else if (status === 'CHANNEL_ERROR') console.error('[Supabase] 社区帖子订阅错误');
+      });
+    return channel;
+  } catch(ex) { console.error('[Supabase] subscribeToCommunityPosts 异常:', ex.message); return null; }
+};
+
+const subscribeToCommunityComments = (onNewComment) => {
+  const sb = getSupabase(); if (!sb) return null;
+  try {
+    const channel = sb.channel('community-comments')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'post_comments' }, payload => {
+        if (payload.new && onNewComment) {
+          const c = payload.new;
+          onNewComment({
+            id: c.comment_id, userId: c.user_id, userName: c.user_name,
+            text: c.text, time: c.time || '刚刚', postId: c.post_id, postTitle: c.post_title || ''
+          });
+        }
+      })
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') console.log('[Supabase] 社区评论订阅成功');
+        else if (status === 'CHANNEL_ERROR') console.error('[Supabase] 社区评论订阅错误');
+      });
+    return channel;
+  } catch(ex) { console.error('[Supabase] subscribeToCommunityComments 异常:', ex.message); return null; }
+};
+
 // 主题管理
 const ThemeContext = createContext(null);
 
@@ -555,15 +774,18 @@ function useAppState() {
   });
 
   const toggleFavorite = useCallback((itemId, type = 'post') => {
+    const uid = currentUser.id;
     setFavorites(prev => {
       const key = type + '_' + itemId;
       if (prev.includes(key)) {
+        removeFavoriteFromSupabase(uid, itemId, type).catch(e => console.warn('[Supabase] removeFavorite 异常:', e));
         return prev.filter(f => f !== key);
       } else {
+        addFavoriteToSupabase(uid, itemId, type).catch(e => console.warn('[Supabase] addFavorite 异常:', e));
         return [...prev, key];
       }
     });
-  }, []);
+  }, [currentUser.id]);
 
   const isFavorite = useCallback((itemId, type = 'post') => {
     return favorites.includes(type + '_' + itemId);
@@ -690,6 +912,7 @@ function useAppState() {
 
   const addPost = useCallback((newPost) => {
     setPosts(prev => [newPost, ...prev]);
+    savePostToSupabase(newPost).catch(e => console.warn('[Supabase] savePostToSupabase 异常:', e));
   }, []);
 
   // 更新约玩
@@ -748,7 +971,16 @@ function useAppState() {
       localStorage.setItem('nlqw_post_comments', JSON.stringify(newComments));
       return newComments;
     });
-  }, []);
+    // 同步更新帖子评论数
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, comments: (p.comments || 0) + 1 } : p));
+    // 同步到 Supabase
+    const newCount = (postComments[postId] || []).length + 1;
+    updatePostToSupabase(postId, { comments: newCount }).catch(e => console.warn('[Supabase] updatePostToSupabase 异常:', e));
+    saveCommentToSupabase({
+      id: commentId, postId, userId: currentUser.id,
+      userName: currentUser.name, text, time: '刚刚', postTitle: postTitle || ''
+    }).catch(e => console.warn('[Supabase] saveCommentToSupabase 异常:', e));
+  }, [postComments]);
 
   const deletePostComment = useCallback((postId, commentId) => {
     setPostComments(prev => {
@@ -843,6 +1075,101 @@ function useAppState() {
     }
     return [...places, ...customPlaces];
   }, [places, customPlaces, nearbyPois]);
+
+  // ===== 应用启动时从 Supabase 加载社区数据 =====
+  useEffect(() => {
+    const uid = currentUser.id;
+    if (!uid) return;
+    const sb = getSupabase();
+    if (!sb) return;
+    console.log('[Supabase] 开始加载社区数据...');
+    Promise.all([
+      loadPostsFromSupabase(),
+      loadPostCommentsFromSupabase(),
+      loadLikesFromSupabase(uid),
+      loadFavoritesFromSupabase(uid)
+    ]).then(([supabasePosts, supabaseComments, supabaseLikes, supabaseFavorites]) => {
+      if (supabasePosts && supabasePosts.length > 0) {
+        console.log('[Supabase] 社区帖子加载完成:', supabasePosts.length, '篇');
+        setPosts(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const newPosts = supabasePosts.filter(p => !existingIds.has(p.id));
+          return [...newPosts, ...prev];
+        });
+      }
+      if (supabaseComments && Object.keys(supabaseComments).length > 0) {
+        const total = Object.values(supabaseComments).reduce((s, a) => s + a.length, 0);
+        console.log('[Supabase] 社区评论加载完成:', total, '条');
+        setPostComments(prev => {
+          const merged = { ...prev };
+          Object.keys(supabaseComments).forEach(postId => {
+            if (!merged[postId]) merged[postId] = supabaseComments[postId];
+            else {
+              const existingIds = new Set(merged[postId].map(c => c.id));
+              const newComments = supabaseComments[postId].filter(c => !existingIds.has(c.id));
+              merged[postId] = [...merged[postId], ...newComments];
+            }
+          });
+          return merged;
+        });
+      }
+      if (supabaseLikes && supabaseLikes.length > 0) {
+        console.log('[Supabase] 点赞记录加载完成:', supabaseLikes.length, '条');
+        localStorage.setItem('nlqw_liked_posts', JSON.stringify(supabaseLikes));
+      }
+      if (supabaseFavorites && supabaseFavorites.length > 0) {
+        console.log('[Supabase] 收藏加载完成:', supabaseFavorites.length, '条');
+        setFavorites(prev => {
+          const existingSet = new Set(prev);
+          const newFavs = supabaseFavorites.filter(f => !existingSet.has(f));
+          return [...prev, ...newFavs];
+        });
+      }
+    }).catch(e => console.warn('[Supabase] 社区数据加载异常:', e && e.message));
+  }, [currentUser.id]);
+
+  // ===== 实时订阅：社区帖子 =====
+  useEffect(() => {
+    const sb = getSupabase();
+    if (!sb) return;
+    const channel = subscribeToCommunityPosts(
+      (newPost) => {
+        setPosts(prev => {
+          if (prev.find(p => p.id === newPost.id)) return prev;
+          console.log('[Supabase] 社区新帖子:', newPost.title);
+          return [newPost, ...prev];
+        });
+      },
+      (postId, updates) => {
+        setPosts(prev => prev.map(p => {
+          if (p.id !== postId) return p;
+          const updated = { ...p };
+          if (updates.likes !== undefined) updated.likes = updates.likes;
+          if (updates.comments !== undefined) updated.comments = updates.comments;
+          return updated;
+        }));
+      }
+    );
+    return () => { if (channel) { try { channel.unsubscribe(); } catch(e) {} } };
+  }, []);
+
+  // ===== 实时订阅：社区评论 =====
+  useEffect(() => {
+    const sb = getSupabase();
+    if (!sb) return;
+    const channel = subscribeToCommunityComments((newComment) => {
+      setPostComments(prev => {
+        const newComments = { ...prev };
+        if (!newComments[newComment.postId]) newComments[newComment.postId] = [];
+        if (newComments[newComment.postId].some(c => c.id === newComment.id)) return prev;
+        newComments[newComment.postId] = [...newComments[newComment.postId], newComment];
+        console.log('[Supabase] 社区新评论:', newComment.postId);
+        return newComments;
+      });
+      setPosts(prev => prev.map(p => p.id === newComment.postId ? { ...p, comments: (p.comments || 0) + 1 } : p));
+    });
+    return () => { if (channel) { try { channel.unsubscribe(); } catch(e) {} } };
+  }, []);
 
   return {
     currentPage, setCurrentPage,
@@ -2158,23 +2485,25 @@ function CommunityPage() {
 
   const handleLike = (postId) => {
     const isLiked = likedPosts.includes(postId);
+    const post = posts.find(p => p.id === postId);
     if (isLiked) {
       setLikedPosts(prev => prev.filter(id => id !== postId));
-      updatePost(postId, { likes: (posts.find(p => p.id === postId)?.likes || 1) - 1 });
-      // 同步到 Supabase: unlikePostToSupabase / updatePostToSupabase
+      const newLikes = (post?.likes || 1) - 1;
+      updatePost(postId, { likes: newLikes });
+      unlikePostToSupabase(postId, currentUser.id).catch(e => console.warn('[Supabase] unlike 异常:', e));
+      updatePostToSupabase(postId, { likes: newLikes }).catch(e => console.warn('[Supabase] updatePost 异常:', e));
     } else {
       setLikedPosts(prev => [...prev, postId]);
-      updatePost(postId, { likes: (posts.find(p => p.id === postId)?.likes || 0) + 1 });
-      // 同步到 Supabase: likePostToSupabase / updatePostToSupabase
+      const newLikes = (post?.likes || 0) + 1;
+      updatePost(postId, { likes: newLikes });
+      likePostToSupabase(postId, currentUser.id).catch(e => console.warn('[Supabase] like 异常:', e));
+      updatePostToSupabase(postId, { likes: newLikes }).catch(e => console.warn('[Supabase] updatePost 异常:', e));
     }
   };
 
   const handleAddPostComment = (postId, text) => {
     if (!text.trim()) return;
     addPostComment(postId, text, currentUser);
-    // 本地更新帖子评论数
-    const existingComments = postComments[postId] || [];
-    updatePost(postId, { comments: existingComments.length + 1 });
   };
 
   useEffect(() => {
