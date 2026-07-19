@@ -2602,7 +2602,6 @@ function useAppState() {
   }, []);
 
   const deleteAllPosts = useCallback(() => {
-    // 删除 Supabase 所有帖子
     var sb = getSupabase();
     if (sb) {
       sb.from('post_comments').delete().neq('id', '').catch(function() {});
@@ -2610,7 +2609,6 @@ function useAppState() {
       sb.from('favorites').delete().neq('id', '').catch(function() {});
       sb.from('posts').delete().neq('id', '').catch(function() {});
     }
-    // 清空本地数据
     setPosts([]);
     setPostComments({});
     localStorage.removeItem('nlqw_posts');
@@ -7441,5 +7439,28 @@ root.render(
       fail('BOOT ERROR:\n' + errText);
     }
   })();
+</script>
+<script>
+// === 一次性清空所有动态帖子（刷新后生效，自动删除） ===
+(function() {
+  if (localStorage.getItem('nlqw_purged_20260719')) return;
+  localStorage.setItem('nlqw_purged_20260719', '1');
+  localStorage.removeItem('nlqw_posts');
+  localStorage.removeItem('nlqw_post_comments');
+  localStorage.removeItem('nlqw_liked_posts');
+  localStorage.removeItem('nlqw_favorites');
+  try {
+    var cfg = { url: 'https://uvkdabhmqwquoksiydew.supabase.co', anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV2a2RhYmhtcXdxdW9rc2l5ZGV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxODQwMjAsImV4cCI6MjA5OTc2MDAyMH0.TpcSlRkmus-_sbFlGqkjl2TtLi1zR82bUC7WCo0jTFE' };
+    try { var saved = JSON.parse(localStorage.getItem('nlqw_supabase_config')); if (saved && saved.url) cfg = saved; } catch(e) {}
+    var sb = window.supabase && window.supabase.createClient ? window.supabase.createClient(cfg.url, cfg.anonKey) : null;
+    if (sb) {
+      sb.from('post_comments').delete().neq('id','').then(function(){});
+      sb.from('post_likes').delete().neq('id','').then(function(){});
+      sb.from('favorites').delete().neq('id','').then(function(){});
+      sb.from('posts').delete().neq('id','').then(function(){});
+    }
+  } catch(e) {}
+  console.log('[清理] 所有动态帖子已删除，刷新页面即可');
+})();
 </script></body>
 </html>
