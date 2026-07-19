@@ -2086,6 +2086,12 @@ function useAppState() {
     var uid = currentUser.id;
     if (!uid) return;
     console.log('[Supabase] 启动全局好友订阅 (' + uid + ')');
+
+    var alive = true;
+    var pollTimer = null;
+    var lastFriendIds = null;
+
+    // 实时订阅：INSERT（有人加你）和 DELETE（有人删你）
     var channel = subscribeToFriendships(uid, function(friendId, friendData) {
       setFriends(function(prev) {
         if (prev.find(function(f) { return f.id === friendId; })) return prev;
@@ -2114,11 +2120,66 @@ function useAppState() {
       });
       console.log('[Supabase] 好友关系已同步删除: ' + deletedFriendId);
     });
+
+    // 轮询兜底：每 8 秒校验好友列表是否变化
+    function pollFriendships() {
+      if (!alive) return;
+      var sb = getSupabase();
+      if (!sb || !isSupabaseTablesReady()) { pollTimer = setTimeout(pollFriendships, 8000); return; }
+      sb.from('friendships').select('friend_id').eq('user_id', uid)
+        .then(function(r) {
+          if (!alive) return;
+          if (r.error) { pollTimer = setTimeout(pollFriendships, 8000); return; }
+          if (!r.data) { pollTimer = setTimeout(pollFriendships, 8000); return; }
+          var currentFriendIds = r.data.map(function(f) { return f.friend_id; });
+          if (lastFriendIds !== null) {
+            // 检测被删除的好友（之前有、现在没有的）
+            var deletedIds = lastFriendIds.filter(function(id) { return currentFriendIds.indexOf(id) === -1; });
+            if (deletedIds.length > 0) {
+              console.log('[FriendsPoll] 📡 轮询发现 ' + deletedIds.length + ' 个好友被删除: ' + deletedIds.join(','));
+              deletedIds.forEach(function(deletedId) {
+                setFriends(function(prev) { return prev.filter(function(f) { return f.id !== deletedId; }); });
+                setUnreadCounts(function(prev) {
+                  if (!prev[deletedId]) return prev;
+                  var next = { ...prev };
+                  delete next[deletedId];
+                  return next;
+                });
+              });
+            }
+            // 检测新增好友
+            var newIds = currentFriendIds.filter(function(id) { return lastFriendIds.indexOf(id) === -1; });
+            if (newIds.length > 0) {
+              console.log('[FriendsPoll] 📡 轮询发现 ' + newIds.length + ' 个新好友: ' + newIds.join(','));
+              // 异步加载新好友信息
+              newIds.forEach(function(newId) {
+                sb.from('nearby_users').select('*').eq('id', newId).single().then(function(pResp) {
+                  if (!alive) return;
+                  var friendData = (!pResp.error && pResp.data) ? pResp.data : null;
+                  setFriends(function(prev) {
+                    if (prev.find(function(f) { return f.id === newId; })) return prev;
+                    var newFriend = friendData || { id: newId, name: '邻居' + newId.slice(-4), avatar: '👤', color: '#4A90D9' };
+                    return [...prev, newFriend];
+                  });
+                });
+              });
+            }
+          }
+          lastFriendIds = currentFriendIds;
+          pollTimer = setTimeout(pollFriendships, 8000);
+        }).catch(function() {
+          pollTimer = setTimeout(pollFriendships, 8000);
+        });
+    }
+    pollTimer = setTimeout(pollFriendships, 8000);
+
     return function() {
+      alive = false;
       if (channel) {
         try { channel.unsubscribe(); } catch(e) {}
         console.log('[Supabase] 全局好友订阅已取消');
       }
+      if (pollTimer) clearTimeout(pollTimer);
     };
   }, [currentUser.id, supabaseReady]);
 
@@ -6057,20 +6118,7 @@ function ChatPage({ friend, onBack }) {
   // 进入聊天时清零该好友的未读数
   useEffect(() => {
     resetUnreadCount(friend.id);
-  }, [friend.id]);
-
-  // 如果对方已不是好友，清空本地聊天记录（从实时删除事件同步）
-  useEffect(() => {
-    if (isNotFriend) {
-      console.log('[ChatPage] 对方已不是好友，清空聊天记录:', friend.id);
-      setMessages(function(prev) {
-        if (!prev[friend.id]) return prev;
-        var next = { ...prev };
-        delete next[friend.id];
-        return next;
-      });
-    }
-  }, [isNotFriend, friend.id]);
+  }, [friend.id, resetUnreadCount]);
 
   // 进入聊天时从 Supabase 加载历史消息（仅当仍是好友时加载）
   useEffect(() => {
@@ -6191,14 +6239,21 @@ function ChatPage({ friend, onBack }) {
 
       {isNotFriend && (
         <div style={{
-          background: '#FFF0F0', border: '1px solid #FFB8B8', borderRadius: 8,
-          padding: '10px 14px', margin: '8px 12px 0',
-          display: 'flex', alignItems: 'center', gap: 8
+          background: 'linear-gradient(135deg, #FFF5F5 0%, #FED7D7 100%)',
+          border: '2px solid #FC8181', borderRadius: 10,
+          padding: '12px 16px', margin: '8px 12px 0',
+          display: 'flex', alignItems: 'center', gap: 10,
+          animation: 'fadeIn 0.3s ease'
         }}>
-          <i className="fa-solid fa-circle-exclamation" style={{ color: '#E53E3E', fontSize: 18 }}></i>
-          <span style={{ color: '#C53030', fontSize: 13, fontWeight: 500 }}>
-            对方已不是你的好友，无法发送消息
-          </span>
+          <i className="fa-solid fa-triangle-exclamation" style={{ color: '#E53E3E', fontSize: 20, animation: 'pulse 2s infinite' }}></i>
+          <div>
+            <div style={{ color: '#C53030', fontSize: 14, fontWeight: 700 }}>
+              他已经不是你的好友了
+            </div>
+            <div style={{ color: '#9B2C2C', fontSize: 12, marginTop: 2, opacity: 0.8 }}>
+              无法再发送消息，聊天记录仅保留查看
+            </div>
+          </div>
         </div>
       )}
 
