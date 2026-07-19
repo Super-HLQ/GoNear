@@ -4949,7 +4949,6 @@ function CommunityPage() {
   };
 
   const handleDeletePost = (postId) => {
-    if (!confirm('确定要删除这条帖子吗？相关评论和点赞也会被删除。')) return;
     deletePost(postId);
   };
 
@@ -5101,6 +5100,7 @@ function CommunityPage() {
 function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen, onToggleComment, onAddComment, currentUser, onDelete, onDeleteComment }) {
   const [heartAnim, setHeartAnim] = useState(false);
   const [commentText, setCommentText] = useState('');
+  const [deletingPost, setDeletingPost] = useState(false);
 
   const handleLike = () => {
     setHeartAnim(true);
@@ -5131,20 +5131,48 @@ function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen
       }}>
         <i className="fa-solid fa-image" style={{ fontSize: 28, opacity: 0.6 }}></i>
         {currentUser && post.userId === currentUser.id && (
-          <button
-            onClick={() => onDelete && onDelete(post.id)}
-            style={{
-              position: 'absolute', top: 8, right: 8,
-              background: 'rgba(0,0,0,0.4)', color: '#fff',
-              border: 'none', borderRadius: 4,
-              width: 22, height: 22, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 10,
-            }}
-            title="删除帖子"
-          >
-            <i className="fa-solid fa-trash-can"></i>
-          </button>
+          deletingPost ? (
+            <div style={{
+              position: 'absolute', top: 6, right: 6,
+              background: 'rgba(255,77,79,0.95)', borderRadius: 6,
+              padding: '2px 8px',
+              display: 'flex', alignItems: 'center', gap: 5,
+              fontSize: 11, whiteSpace: 'nowrap',
+            }}>
+              <span style={{ color: '#fff', fontWeight: 600, opacity: 0.9 }}>确认删除？</span>
+              <button onClick={(e) => { e.stopPropagation(); onDelete && onDelete(post.id); setDeletingPost(false); }}
+                style={{
+                  background: '#fff', color: '#FF4D4F', border: 'none', borderRadius: 3,
+                  padding: '2px 7px', cursor: 'pointer', fontSize: 11, fontWeight: 600, lineHeight: 1.4
+                }}>
+                删除
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); setDeletingPost(false); }}
+                style={{
+                  background: 'transparent', color: '#fff', border: '1px solid rgba(255,255,255,0.4)', borderRadius: 3,
+                  padding: '2px 7px', cursor: 'pointer', fontSize: 11, lineHeight: 1.4
+                }}>
+                取消
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); setDeletingPost(true); }}
+              style={{
+                position: 'absolute', top: 6, right: 6,
+                background: 'rgba(0,0,0,0.2)', color: '#fff',
+                border: 'none', borderRadius: 4,
+                width: 20, height: 20, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 10, opacity: 0.6, transition: 'opacity 0.2s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+              onMouseLeave={e => e.currentTarget.style.opacity = '0.6'}
+              title="删除动态"
+            >
+              <i className="fa-solid fa-trash-can"></i>
+            </button>
+          )
         )}
       </div>
       <div style={{ padding: 10 }}>
