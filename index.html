@@ -4899,7 +4899,7 @@ function PlayDateModal({ place, onClose, onSuccess }) {
 
 // 社区广场（瀑布流）
 function CommunityPage() {
-  const { posts, updatePost, addPost, deletePost, deleteAllPosts, toggleFavorite, isFavorite, currentUser, postComments, addPostComment, deletePostComment, userLocation, places, nearbyPois, supabaseReady } = useApp();
+  const { posts, updatePost, addPost, deletePost, toggleFavorite, isFavorite, currentUser, postComments, addPostComment, deletePostComment, userLocation, places, nearbyPois, supabaseReady } = useApp();
   const [sortBy, setSortBy] = useState('latest'); // 'latest' | 'hot'
   const [showPublish, setShowPublish] = useState(false);
   const [deletePostId, setDeletePostId] = useState(null); // 待删除帖子ID（用于确认弹窗）
@@ -5009,11 +5009,7 @@ function CommunityPage() {
           <button className="btn btn-primary btn-sm" onClick={() => setShowPublish(true)}>
             <i className="fa-solid fa-pen"></i> 发布
           </button>
-          {posts.length > 0 && (
-            <button className="btn btn-sm" style={{ background: '#ff4d4f', color: '#fff', border: 'none' }} onClick={() => { if (window.confirm('确定删除全部动态？此操作不可恢复！')) deleteAllPosts(); }}>
-              <i className="fa-solid fa-trash-can"></i>
-            </button>
-          )}
+
         </div>
       </div>
 
