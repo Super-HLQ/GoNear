@@ -7437,26 +7437,43 @@ root.render(
   })();
 </script>
 <script>
-// === 一次性清空所有动态帖子（刷新后生效，自动删除） ===
+// === 一次性删除"哇哇的WA"的动态帖子（刷新后生效） ===
 (function() {
-  if (localStorage.getItem('nlqw_purged_20260719')) return;
-  localStorage.setItem('nlqw_purged_20260719', '1');
-  localStorage.removeItem('nlqw_posts');
-  localStorage.removeItem('nlqw_post_comments');
-  localStorage.removeItem('nlqw_liked_posts');
-  localStorage.removeItem('nlqw_favorites');
+  if (localStorage.getItem('nlqw_purged_wawa')) return;
+  localStorage.setItem('nlqw_purged_wawa', '1');
+  var targetUser = '哇哇的WA';
+
+  // 清理 localStorage 中哇哇的WA的帖子
+  try {
+    var posts = JSON.parse(localStorage.getItem('nlqw_posts') || '[]');
+    var filtered = posts.filter(function(p) { return p.userName !== targetUser; });
+    localStorage.setItem('nlqw_posts', JSON.stringify(filtered));
+    console.log('[清理] 本地帖子已过滤，移除 ' + (posts.length - filtered.length) + ' 条');
+  } catch(e) {}
+
+  // 清理 Supabase 中哇哇的WA的帖子
   try {
     var cfg = { url: 'https://uvkdabhmqwquoksiydew.supabase.co', anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV2a2RhYmhtcXdxdW9rc2l5ZGV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxODQwMjAsImV4cCI6MjA5OTc2MDAyMH0.TpcSlRkmus-_sbFlGqkjl2TtLi1zR82bUC7WCo0jTFE' };
     try { var saved = JSON.parse(localStorage.getItem('nlqw_supabase_config')); if (saved && saved.url) cfg = saved; } catch(e) {}
     var sb = window.supabase && window.supabase.createClient ? window.supabase.createClient(cfg.url, cfg.anonKey) : null;
     if (sb) {
-      sb.from('post_comments').delete().neq('id','').then(function(){});
-      sb.from('post_likes').delete().neq('id','').then(function(){});
-      sb.from('favorites').delete().neq('id','').then(function(){});
-      sb.from('posts').delete().neq('id','').then(function(){});
+      sb.from('posts').select('id').eq('user_name', targetUser).then(function(r) {
+        if (r.data && r.data.length > 0) {
+          var ids = r.data.map(function(p) { return p.id; });
+          console.log('[清理] Supabase 找到 ' + ids.length + ' 条帖子');
+          // 删除评论和点赞
+          ids.forEach(function(pid) {
+            sb.from('post_comments').delete().eq('post_id', pid).then(function(){});
+            sb.from('post_likes').delete().eq('post_id', pid).then(function(){});
+            sb.from('favorites').delete().eq('item_id', pid).then(function(){});
+          });
+          // 删除帖子
+          sb.from('posts').delete().eq('user_name', targetUser).then(function(){ console.log('[清理] Supabase 帖子已删除'); });
+        }
+      });
     }
   } catch(e) {}
-  console.log('[清理] 所有动态帖子已删除，刷新页面即可');
+  console.log('[清理] 哇哇的WA的帖子已删除，刷新页面即可');
 })();
 </script></body>
 </html>
