@@ -6237,26 +6237,6 @@ function ChatPage({ friend, onBack }) {
         </div>
       )}
 
-      {isNotFriend && (
-        <div style={{
-          background: 'linear-gradient(135deg, #FFF5F5 0%, #FED7D7 100%)',
-          border: '2px solid #FC8181', borderRadius: 10,
-          padding: '12px 16px', margin: '8px 12px 0',
-          display: 'flex', alignItems: 'center', gap: 10,
-          animation: 'fadeIn 0.3s ease'
-        }}>
-          <i className="fa-solid fa-triangle-exclamation" style={{ color: '#E53E3E', fontSize: 20, animation: 'pulse 2s infinite' }}></i>
-          <div>
-            <div style={{ color: '#C53030', fontSize: 14, fontWeight: 700 }}>
-              他已经不是你的好友了
-            </div>
-            <div style={{ color: '#9B2C2C', fontSize: 12, marginTop: 2, opacity: 0.8 }}>
-              无法再发送消息，聊天记录仅保留查看
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="chat-messages">
         {chatMessages.length === 0 ? (
           <div className="chat-empty">
@@ -6264,9 +6244,13 @@ function ChatPage({ friend, onBack }) {
               {friend.avatar}
             </div>
             <p className="chat-empty-name">{friend.name}</p>
-            <p className="text-muted text-sm">
-              {isNotFriend ? '对方已不是你的好友' : '你们已经是好友了，开始聊天吧！'}
-            </p>
+            {isNotFriend ? (
+              <p style={{ color: '#E53E3E', fontSize: 14, fontWeight: 600, marginTop: 4 }}>
+                对方已不是你的好友了
+              </p>
+            ) : (
+              <p className="text-muted text-sm">你们已经是好友了，开始聊天吧！</p>
+            )}
           </div>
         ) : (
           chatMessages.map((msg, idx) => {
@@ -6293,6 +6277,22 @@ function ChatPage({ friend, onBack }) {
               </div>
             );
           })
+        )}
+        {isNotFriend && (
+          <div style={{
+            textAlign: 'center', padding: '12px 16px',
+            animation: 'fadeIn 0.3s ease'
+          }}>
+            <span style={{
+              color: '#E53E3E', fontSize: 13, fontWeight: 600,
+              background: 'linear-gradient(135deg, #FFF5F5 0%, #FED7D7 100%)',
+              border: '1px solid #FC8181', borderRadius: 8,
+              padding: '8px 16px', display: 'inline-block'
+            }}>
+              <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 6 }}></i>
+              对方已不是你的好友了
+            </span>
+          </div>
         )}
         <div ref={messagesEndRef}></div>
       </div>
