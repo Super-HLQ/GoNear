@@ -5162,7 +5162,7 @@ function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen
                 position: 'absolute', top: 6, right: 6,
                 background: 'rgba(0,0,0,0.2)', color: '#fff',
                 border: 'none', borderRadius: 4,
-                width: 10, height: 10, cursor: 'pointer',
+                width: 8, height: 8, cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: 7, opacity: 0.5, transition: 'opacity 0.2s',
               }}
@@ -5170,7 +5170,7 @@ function PostCard({ post, onLike, isLiked, isFav, onFav, comments, isCommentOpen
               onMouseLeave={e => e.currentTarget.style.opacity = '0.6'}
               title="删除动态"
             >
-              <i className="fa-solid fa-trash-can"></i>
+              <i className="fa-solid fa-xmark"></i>
             </button>
           )
         )}
