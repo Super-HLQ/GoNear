@@ -2601,6 +2601,24 @@ function useAppState() {
     deletePostFromSupabase(postId).catch(function(e) { console.warn('[Supabase] deletePostFromSupabase 异常:', e); });
   }, []);
 
+  const deleteAllPosts = useCallback(() => {
+    // 删除 Supabase 所有帖子
+    var sb = getSupabase();
+    if (sb) {
+      sb.from('post_comments').delete().neq('id', '').catch(function() {});
+      sb.from('post_likes').delete().neq('id', '').catch(function() {});
+      sb.from('favorites').delete().neq('id', '').catch(function() {});
+      sb.from('posts').delete().neq('id', '').catch(function() {});
+    }
+    // 清空本地数据
+    setPosts([]);
+    setPostComments({});
+    localStorage.removeItem('nlqw_posts');
+    localStorage.removeItem('nlqw_post_comments');
+    localStorage.removeItem('nlqw_liked_posts');
+    localStorage.removeItem('nlqw_favorites');
+  }, []);
+
   // 更新约玩
   const updatePlayDate = useCallback((playId, updates) => {
     setPlayDates(prev => prev.map(p => p.id === playId ? { ...p, ...updates } : p));
@@ -2912,7 +2930,7 @@ function useAppState() {
     currentPage, setCurrentPage,
     weather, setWeather, aqi, setAqi, hour,
     places: allPlaces, customPlaces, addPlace,
-    posts, updatePost, addPost, deletePost,
+    posts, updatePost, addPost, deletePost, deleteAllPosts,
     playDates, updatePlayDate, addPlayDate, deletePlayDate,
     reviews, addReview, updateReview, deleteReview,
     favorites, toggleFavorite, isFavorite,
@@ -4883,7 +4901,7 @@ function PlayDateModal({ place, onClose, onSuccess }) {
 
 // 社区广场（瀑布流）
 function CommunityPage() {
-  const { posts, updatePost, addPost, deletePost, toggleFavorite, isFavorite, currentUser, postComments, addPostComment, deletePostComment, userLocation, places, nearbyPois, supabaseReady } = useApp();
+  const { posts, updatePost, addPost, deletePost, deleteAllPosts, toggleFavorite, isFavorite, currentUser, postComments, addPostComment, deletePostComment, userLocation, places, nearbyPois, supabaseReady } = useApp();
   const [sortBy, setSortBy] = useState('latest'); // 'latest' | 'hot'
   const [showPublish, setShowPublish] = useState(false);
   const [deletePostId, setDeletePostId] = useState(null); // 待删除帖子ID（用于确认弹窗）
@@ -4993,6 +5011,11 @@ function CommunityPage() {
           <button className="btn btn-primary btn-sm" onClick={() => setShowPublish(true)}>
             <i className="fa-solid fa-pen"></i> 发布
           </button>
+          {posts.length > 0 && (
+            <button className="btn btn-sm" style={{ background: '#ff4d4f', color: '#fff', border: 'none' }} onClick={() => { if (window.confirm('确定删除全部动态？此操作不可恢复！')) deleteAllPosts(); }}>
+              <i className="fa-solid fa-trash-can"></i>
+            </button>
+          )}
         </div>
       </div>
 
