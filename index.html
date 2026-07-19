@@ -2122,12 +2122,19 @@ function useAppState() {
     };
   }, [currentUser.id, supabaseReady]);
 
+
   // ===== 全局 Supabase 实时订阅：好友申请 =====
   useEffect(() => {
     if (!supabaseReady || !getSupabase() || !isSupabaseTablesReady()) return;
     var uid = currentUser.id;
     if (!uid) return;
     console.log('[Supabase] 启动好友申请订阅 (' + uid + ')');
+
+    var alive = true;
+    var lastPollCount = -1;
+    var pollTimer = null;
+
+    // 实时订阅（INSERT 事件）
     var channel = subscribeToFriendRequests(uid, function(request) {
       setFriendRequests(function(prev) {
         if (prev.find(function(r) { return r.fromUserId === request.fromUserId; })) return prev;
@@ -2135,11 +2142,56 @@ function useAppState() {
         return [...prev, request];
       });
     });
+
+    // 轮询兜底：每 5 秒检查是否有新的待处理申请
+    function pollFriendRequests() {
+      if (!alive) return;
+      var sb = getSupabase();
+      if (!sb || !isSupabaseTablesReady()) { pollTimer = setTimeout(pollFriendRequests, 5000); return; }
+      sb.from('friend_requests').select('*').eq('to_user_id', uid).eq('status', 'pending')
+        .then(function(r) {
+          if (!alive) return;
+          if (r.error) { console.warn('[FRPoll] 查询失败:', r.error.message); pollTimer = setTimeout(pollFriendRequests, 5000); return; }
+          if (!r.data) { pollTimer = setTimeout(pollFriendRequests, 5000); return; }
+          var newCount = r.data.length;
+          if (lastPollCount >= 0 && newCount > lastPollCount) {
+            console.log('[FRPoll] 📡 轮询发现 ' + (newCount - lastPollCount) + ' 条新申请');
+            // 用轮询结果完全刷新
+            var fromIds = r.data.map(function(item) { return item.from_user_id; });
+            sb.from('nearby_users').select('id,name,avatar,color').in('id', fromIds).then(function(pResp) {
+              if (!alive) return;
+              var userMap = {};
+              if (pResp.data) { pResp.data.forEach(function(p) { userMap[p.id] = p; }); }
+              setFriendRequests(r.data.map(function(item) {
+                var u = userMap[item.from_user_id];
+                return {
+                  id: item.id,
+                  fromUserId: item.from_user_id,
+                  toUserId: item.to_user_id,
+                  status: item.status,
+                  createdAt: item.created_at,
+                  fromUserName: u ? u.name : ('邻居' + item.from_user_id.slice(-4)),
+                  fromUserAvatar: u ? (u.avatar || '👤') : '👤',
+                  fromUserColor: u ? (u.color || '#4A90D9') : '#4A90D9',
+                };
+              }));
+            });
+          }
+          lastPollCount = newCount;
+          pollTimer = setTimeout(pollFriendRequests, 5000);
+        }).catch(function() {
+          pollTimer = setTimeout(pollFriendRequests, 5000);
+        });
+    }
+    pollTimer = setTimeout(pollFriendRequests, 5000);
+
     return function() {
+      alive = false;
       if (channel) {
         try { channel.unsubscribe(); } catch(e) {}
         console.log('[Supabase] 好友申请订阅已取消');
       }
+      if (pollTimer) clearTimeout(pollTimer);
     };
   }, [currentUser.id, supabaseReady]);
 
@@ -2657,6 +2709,27 @@ function useAppState() {
     });
   }, [currentUser.id]);
 
+  // 手动刷新好友申请数据（收到申请 + 已发出申请）
+  const refreshFriendRequests = useCallback(function() {
+    var uid = currentUser.id;
+    if (!uid || !getSupabase() || !isSupabaseTablesReady()) return;
+    console.log('[Supabase] 手动刷新好友申请...');
+    loadFriendRequestsFromSupabase(uid).then(function(data) {
+      if (data && data.length >= 0) {
+        setFriendRequests(data);
+      }
+    }).catch(function(e) {
+      console.warn('[Supabase] 刷新好友申请异常:', e && e.message);
+    });
+    loadSentFriendRequestsFromSupabase(uid).then(function(ids) {
+      if (ids && ids.length >= 0) {
+        setSentRequestIds(new Set(ids));
+      }
+    }).catch(function(e) {
+      console.warn('[Supabase] 刷新已发送申请异常:', e && e.message);
+    });
+  }, [currentUser.id]);
+
   const removeFriend = useCallback((friendId) => {
     setFriends(prev => prev.filter(f => f.id !== friendId));
     // 记录到已删除列表，用于在发现页显示红色提示
@@ -2786,7 +2859,7 @@ function useAppState() {
     currentUser, updateCurrentUser,
     userLocation, setUserLocation,
     nearbyPois, searchNearby, searchingNearby, nearbySearchError,
-    friends, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, getFriends, removedFriendIds, friendRequests, sentRequestIds,
+    friends, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, getFriends, removedFriendIds, friendRequests, sentRequestIds, refreshFriendRequests,
     messages, sendMessage, getChatMessages,
     unreadCounts, resetUnreadCount,
     nearbyUsers, refreshNearbyUsers,
@@ -5420,7 +5493,7 @@ function ReviewSection({ placeId, reviews, addReview, updateReview, currentUser 
 
 // ==================== 组件：好友列表（基于真实定位的附近的人）====================
 function FriendListPage({ onChatOpen }) {
-  const { friends, removeFriend, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, messages, unreadCounts, nearbyUsers, refreshNearbyUsers, userLocation, setUserLocation, selectedCity, selectCity, supabaseReady, currentUser, removedFriendIds, friendRequests, sentRequestIds } = useApp();
+  const { friends, removeFriend, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, messages, unreadCounts, nearbyUsers, refreshNearbyUsers, userLocation, setUserLocation, selectedCity, selectCity, supabaseReady, currentUser, removedFriendIds, friendRequests, sentRequestIds, refreshFriendRequests } = useApp();
   const [activeTab, setActiveTab] = useState('myFriends');
   const [searchText, setSearchText] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -5499,6 +5572,13 @@ function FriendListPage({ onChatOpen }) {
       refreshNearbyUsers(userLocation.lat, userLocation.lng);
     }
   }, [activeTab, userLocation, nearbyUsers.length, refreshNearbyUsers]);
+
+  // 切换到「申请」tab 时主动刷新好友申请数据
+  useEffect(() => {
+    if (activeTab === 'requests') {
+      refreshFriendRequests();
+    }
+  }, [activeTab, refreshFriendRequests]);
 
   const unreadCount = (friendId) => {
     return unreadCounts[friendId] || 0;
